@@ -1,0 +1,46 @@
+# aegis-audit configuration
+# Override any value with --config /path/to/custom.yaml
+
+target:
+  threads: 20
+  timeout: 10           # request timeout in seconds
+  delay: 0              # delay between requests (ms)
+  max_redirects: 5
+
+recon:
+  subdomains:
+    wordlist: "subdomains-top1million.txt"
+    sources:
+      - crtsh
+      - anubis
+      - alienvault
+      - wayback
+    depth: 2
+    resolver: "1.1.1.1"
+
+scan:
+  ports:
+    top: 1000           # scan top N ports
+    rate: 1000          # packets per second (masscan)
+  service_detect: true
+  os_detect: false
+
+fingerprint:
+  http_probe: true
+  extract_versions: true
+  detect_waf: true
+  screenshot: false     # requires gowitness
+
+vuln:
+  cve_db_path: "~/.aegis/cve.db"
+  nuclei_templates: "~/.aegis/nuclei-templates"
+  severity_min: "medium"  # filter: info, low, medium, high, critical
+  enable_checks:
+    - cve
+    - misconfig
+    - exp
+
+report:
+  format: "html"
+  include_evidence: true
+  open_browser: false

@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AEGIS_ROOT="$(cd "$(dirname "$0")" && pwd)"
+export AEGIS_ROOT
+export AEGIS_CONFIG="${AEGIS_CONFIG:-$AEGIS_ROOT/config/default.yaml}"
+export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
+
+# colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+usage() {
+    cat <<EOF
+aegis-audit — Automated vulnerability assessment pipeline
+
+Usage:
+  aegis audit   --domain <domain>    Run full pipeline against a domain
+  aegis recon   --domain <domain>    Phase 1: subdomain + dns recon only
+  aegis scan    --target <ip/range>  Phase 2: port scan only
+  aegis report  --dir <output_dir>   Generate report from existing output
+  aegis doctor                       Check and install dependencies
+  aegis help                         Show this help
+
+Options:
+  --domain       Target domain (ej: example.com)
+  --target       IP address or CIDR range
+  --config       Custom config file path
+  --output       Output directory (default: ./output/<target>)
+  --threads      Override thread count
+
+Examples:
+  aegis audit --domain ejemplo.com
+  aegis recon --domain ejemplo.com --threads 50
+  aegis scan --target 192.168.1.0/24 --output ./results
+  aegis report --dir ./output/ejemplo.com
+EOF
+    exit 0
+}
+
+phase_info() {
+    echo -e "\n${CYAN}[+]${NC} Phase $1: $2"
+}
+
+phase_ok() {
+    echo -e "  ${GREEN}[ok]${NC} $1"
+}
+
+phase_warn() {
+    echo -e "  ${YELLOW}[!]${NC} $1"
+}
+
+phase_fail() {
+    echo -e "  ${RED}[fail]${NC} $1"
+}
+
+check_deps() {
+    local missing=0
+    local tools=("python3" "nmap" "curl" "dig" "whois")
+
+    for tool in "${tools[@]}"; do
+        if ! command -v "$tool" &>/dev/null; then
+            phase_fail "missing: $tool"
+            missing=1
+        fi
+    done
+
+    if [ "$missing" -eq 1 ]; then
+        echo -e "\n${RED}[!] Run 'aegis doctor' to install missing dependencies${NC}"
+        return 1
+    fi
+    return 0
+}
+
+cmd_doctor() {
+    echo "Checking and installing dependencies..."
+
+    local pkgs=()
+    local gopkgs=()
+    local pipkgs=()
+
+    # apt packages
+    command -v nmap       &>/dev/null || pkgs+=("nmap")
+    command -v curl       &>/dev/null || pkgs+=("curl")
+    command -v dig        &>/dev/null || pkgs+=("dnsutils")
+    command -v whois      &>/dev/null || pkgs+=("whois")
+    command -v jq         &>/dev/null || pkgs+=("jq")
+    command -v whatweb    &>/dev/null || pkgs+=("whatweb")
+    command -v nuclei     &>/dev/null || gopkgs+=("github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
+    command -v httpx      &>/dev/null || gopkgs+=("github.com/projectdiscovery/httpx/cmd/httpx@latest")
+    command -v masscan    &>/dev/null || pkgs+=("masscan")
+
+    if [ ${#pkgs[@]} -gt 0 ]; then
+        echo "Installing: ${pkgs[*]}"
+        sudo apt update -qq && sudo apt install -y -qq "${pkgs[@]}"
+    fi
+
+    if [ ${#gopkgs[@]} -gt 0 ]; then
+        echo "Installing Go tools: ${gopkgs[*]}"
+        for gp in "${gopkgs[@]}"; do
+            go install "$gp"
+        done
+        export PATH="$HOME/go/bin:$PATH"
+    fi
+
+    pipkgs+=("pyyaml" "requests" "jinja2")
+
+    echo "Installing Python packages: ${pipkgs[*]}"
+    pip3 install -q "${pipkgs[@]}"
+
+    echo -e "${GREEN}[+] All dependencies installed.${NC}"
+}
+
+cmd_audit() {
+    check_deps || exit 1
+
+    local domain=""
+    local config="$AEGIS_CONFIG"
+    local output=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --domain) domain="$2"; shift 2 ;;
+            --config) config="$2"; shift 2 ;;
+            --output) output="$2"; shift 2 ;;
+            *) phase_fail "unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$domain" ]; then
+        phase_fail "--domain is required"
+        exit 1
+    fi
+
+    if [ -z "$output" ]; then
+        output="$AEGIS_ROOT/output/$domain"
+    fi
+    mkdir -p "$output"
+
+    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN} aegis-audit${NC}"
+    echo -e "${CYAN} Target: $domain${NC}"
+    echo -e "${CYAN} Output: $output${NC}"
+    echo -e "${CYAN}========================================${NC}"
+
+    # Phase 1: Recon
+    phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
+    python3 "$AEGIS_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
+    if [ ! -f "$output/recon.json" ]; then
+        phase_fail "recon phase produced no output"
+        exit 1
+    fi
+    phase_ok "recon data saved to $output/recon.json"
+
+    # Phase 2: Port Scan
+    local targets="$output/targets.txt"
+    if [ -f "$output/ips.txt" ]; then
+        cp "$output/ips.txt" "$targets"
+    else
+        echo "$domain" > "$targets"
+    fi
+
+    phase_info "2" "Port and service scanning"
+    python3 "$AEGIS_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output"
+    phase_ok "scan data saved to $output/ports.json"
+
+    # Phase 3: Fingerprint
+    phase_info "3" "Technology fingerprinting"
+    python3 "$AEGIS_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output"
+    phase_ok "fingerprint data saved to $output/tech.json"
+
+    # Phase 4: Vulnerability scan
+    phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
+    python3 "$AEGIS_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output"
+    phase_ok "vulnerability data saved to $output/findings.json"
+
+    # Phase 5: Report
+    phase_info "5" "Report generation"
+    python3 "$AEGIS_ROOT/lib/report.py" --input "$output" --config "$config" --output "$output"
+    phase_ok "report saved to $output/report.html"
+
+    echo -e "\n${GREEN}[+] Audit complete.${NC}"
+    echo -e "  Report: ${CYAN}$output/report.html${NC}"
+    echo -e "  Data:  ${CYAN}$output/${NC}"
+}
+
+cmd_recon() {
+    check_deps || exit 1
+
+    local domain=""
+    local config="$AEGIS_CONFIG"
+    local output=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --domain) domain="$2"; shift 2 ;;
+            --config) config="$2"; shift 2 ;;
+            --output) output="$2"; shift 2 ;;
+            *) phase_fail "unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$domain" ]; then
+        phase_fail "--domain is required"
+        exit 1
+    fi
+
+    if [ -z "$output" ]; then
+        output="$AEGIS_ROOT/output/$domain"
+    fi
+    mkdir -p "$output"
+
+    python3 "$AEGIS_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
+    phase_ok "recon data saved to $output/recon.json"
+}
+
+cmd_scan() {
+    check_deps || exit 1
+
+    local targets=""
+    local config="$AEGIS_CONFIG"
+    local output=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --target) targets="$2"; shift 2 ;;
+            --config) config="$2"; shift 2 ;;
+            --output) output="$2"; shift 2 ;;
+            *) phase_fail "unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$targets" ]; then
+        phase_fail "--target is required"
+        exit 1
+    fi
+
+    if [ -z "$output" ]; then
+        output="$AEGIS_ROOT/output/target"
+    fi
+    mkdir -p "$output"
+
+    echo "$targets" > "$output/targets.txt"
+    python3 "$AEGIS_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output"
+    phase_ok "scan data saved to $output/ports.json"
+}
+
+cmd_report() {
+    local input=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dir) input="$2"; shift 2 ;;
+            *) phase_fail "unknown option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [ -z "$input" ]; then
+        phase_fail "--dir is required"
+        exit 1
+    fi
+
+    python3 "$AEGIS_ROOT/lib/report.py" --input "$input" --output "$input"
+    phase_ok "report saved to $input/report.html"
+}
+
+case "${1:-help}" in
+    audit)  shift; cmd_audit "$@" ;;
+    recon)  shift; cmd_recon "$@" ;;
+    scan)   shift; cmd_scan "$@" ;;
+    report) shift; cmd_report "$@" ;;
+    doctor) cmd_doctor ;;
+    help)   usage ;;
+    *)      echo -e "${RED}[!] Unknown command: $1${NC}"; usage ;;
+esac
