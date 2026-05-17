@@ -3,6 +3,6 @@ __pycache__/
 *.pyc
 .env
 config/local.yaml
-~/.aegis/
+~/.netspy/
 tmp/
 *.log

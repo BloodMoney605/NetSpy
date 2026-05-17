@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[+] aegis-audit installer"
+echo "[+] NetSPy installer"
 echo "    target: $(uname -m)-$(uname -s)"
-echo
 
 # -- System packages --
 PKGS=(
@@ -62,8 +61,8 @@ fi
 
 # -- Database init --
 echo "[*] creating data directory..."
-mkdir -p ~/.aegis
+mkdir -p ~/.netspy
 
 echo
 echo "[+] installation complete."
-echo "    run: ./aegis audit --domain example.com"
+echo "    run: ./netspy audit --domain example.com"

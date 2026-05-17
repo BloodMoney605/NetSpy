@@ -45,22 +45,27 @@ def run_cmd(cmd: list[str], timeout: int = 15) -> str | None:
 
 
 def crtsh_subdomains(domain: str) -> list[str]:
-    """Query crt.sh certificate transparency logs for subdomains."""
+    """Query crt.sh certificate transparency logs for subdomains.
+    Retries up to 3 times with backoff on failure."""
     url = f"https://crt.sh/?q=%25.{domain}&output=json"
     req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
     subdomains: set[str] = set()
 
-    try:
-        with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-            for entry in data:
-                name = entry.get("name_value", "")
-                for sub in name.split("\n"):
-                    sub = sub.strip().lower()
-                    if sub.endswith(f".{domain}") and "*" not in sub:
-                        subdomains.add(sub)
-    except Exception:
-        pass
+    for attempt in range(3):
+        try:
+            with urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+                for entry in data:
+                    name = entry.get("name_value", "")
+                    for sub in name.split("\n"):
+                        sub = sub.strip().lower()
+                        if sub.endswith(f".{domain}") and "*" not in sub:
+                            subdomains.add(sub)
+                break
+        except Exception:
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+            continue
 
     return sorted(subdomains)
 

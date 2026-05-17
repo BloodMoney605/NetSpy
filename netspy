@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-AEGIS_ROOT="$(cd "$(dirname "$0")" && pwd)"
-export AEGIS_ROOT
-export AEGIS_CONFIG="${AEGIS_CONFIG:-$AEGIS_ROOT/config/default.yaml}"
+NETSPY_ROOT="$(cd "$(dirname "$0")" && pwd)"
+export NETSPY_ROOT
+export NETSPY_CONFIG="${NETSPY_CONFIG:-$NETSPY_ROOT/config/default.yaml}"
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
 
 # colors for output
@@ -15,15 +15,15 @@ NC='\033[0m'
 
 usage() {
     cat <<EOF
-aegis-audit — Automated vulnerability assessment pipeline
+NetSPy — Network surveillance pipeline
 
 Usage:
-  aegis audit   --domain <domain>    Run full pipeline against a domain
-  aegis recon   --domain <domain>    Phase 1: subdomain + dns recon only
-  aegis scan    --target <ip/range>  Phase 2: port scan only
-  aegis report  --dir <output_dir>   Generate report from existing output
-  aegis doctor                       Check and install dependencies
-  aegis help                         Show this help
+  netspy audit   --domain <domain>    Run full pipeline against a domain
+  netspy recon   --domain <domain>    Phase 1: subdomain + dns recon only
+  netspy scan    --target <ip/range>  Phase 2: port scan only
+  netspy report  --dir <output_dir>   Generate report from existing output
+  netspy doctor                       Check and install dependencies
+  netspy help                         Show this help
 
 Options:
   --domain       Target domain (ej: example.com)
@@ -33,10 +33,10 @@ Options:
   --threads      Override thread count
 
 Examples:
-  aegis audit --domain ejemplo.com
-  aegis recon --domain ejemplo.com --threads 50
-  aegis scan --target 192.168.1.0/24 --output ./results
-  aegis report --dir ./output/ejemplo.com
+  netspy audit --domain ejemplo.com
+  netspy recon --domain ejemplo.com --threads 50
+  netspy scan --target 192.168.1.0/24 --output ./results
+  netspy report --dir ./output/ejemplo.com
 EOF
     exit 0
 }
@@ -69,7 +69,7 @@ check_deps() {
     done
 
     if [ "$missing" -eq 1 ]; then
-        echo -e "\n${RED}[!] Run 'aegis doctor' to install missing dependencies${NC}"
+        echo -e "\n${RED}[!] Run 'netspy doctor' to install missing dependencies${NC}"
         return 1
     fi
     return 0
@@ -118,7 +118,7 @@ cmd_audit() {
     check_deps || exit 1
 
     local domain=""
-    local config="$AEGIS_CONFIG"
+    local config="$NETSPY_CONFIG"
     local output=""
 
     while [ $# -gt 0 ]; do
@@ -136,19 +136,19 @@ cmd_audit() {
     fi
 
     if [ -z "$output" ]; then
-        output="$AEGIS_ROOT/output/$domain"
+        output="$NETSPY_ROOT/output/$domain"
     fi
     mkdir -p "$output"
 
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN} aegis-audit${NC}"
+    echo -e "${CYAN} NetSPy${NC}"
     echo -e "${CYAN} Target: $domain${NC}"
     echo -e "${CYAN} Output: $output${NC}"
     echo -e "${CYAN}========================================${NC}"
 
     # Phase 1: Recon
     phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
-    python3 "$AEGIS_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
     if [ ! -f "$output/recon.json" ]; then
         phase_fail "recon phase produced no output"
         exit 1
@@ -164,22 +164,22 @@ cmd_audit() {
     fi
 
     phase_info "2" "Port and service scanning"
-    python3 "$AEGIS_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output"
     phase_ok "scan data saved to $output/ports.json"
 
     # Phase 3: Fingerprint
     phase_info "3" "Technology fingerprinting"
-    python3 "$AEGIS_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output"
     phase_ok "fingerprint data saved to $output/tech.json"
 
     # Phase 4: Vulnerability scan
     phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
-    python3 "$AEGIS_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output"
     phase_ok "vulnerability data saved to $output/findings.json"
 
     # Phase 5: Report
     phase_info "5" "Report generation"
-    python3 "$AEGIS_ROOT/lib/report.py" --input "$output" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/report.py" --input "$output" --config "$config" --output "$output"
     phase_ok "report saved to $output/report.html"
 
     echo -e "\n${GREEN}[+] Audit complete.${NC}"
@@ -191,7 +191,7 @@ cmd_recon() {
     check_deps || exit 1
 
     local domain=""
-    local config="$AEGIS_CONFIG"
+    local config="$NETSPY_CONFIG"
     local output=""
 
     while [ $# -gt 0 ]; do
@@ -209,11 +209,11 @@ cmd_recon() {
     fi
 
     if [ -z "$output" ]; then
-        output="$AEGIS_ROOT/output/$domain"
+        output="$NETSPY_ROOT/output/$domain"
     fi
     mkdir -p "$output"
 
-    python3 "$AEGIS_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
     phase_ok "recon data saved to $output/recon.json"
 }
 
@@ -221,7 +221,7 @@ cmd_scan() {
     check_deps || exit 1
 
     local targets=""
-    local config="$AEGIS_CONFIG"
+    local config="$NETSPY_CONFIG"
     local output=""
 
     while [ $# -gt 0 ]; do
@@ -239,12 +239,12 @@ cmd_scan() {
     fi
 
     if [ -z "$output" ]; then
-        output="$AEGIS_ROOT/output/target"
+        output="$NETSPY_ROOT/output/target"
     fi
     mkdir -p "$output"
 
     echo "$targets" > "$output/targets.txt"
-    python3 "$AEGIS_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output"
     phase_ok "scan data saved to $output/ports.json"
 }
 
@@ -262,7 +262,7 @@ cmd_report() {
         exit 1
     fi
 
-    python3 "$AEGIS_ROOT/lib/report.py" --input "$input" --output "$input"
+    python3 "$NETSPY_ROOT/lib/report.py" --input "$input" --output "$input"
     phase_ok "report saved to $input/report.html"
 }
 

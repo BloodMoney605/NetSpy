@@ -240,7 +240,7 @@ def run_nuclei(targets_file: str, templates_path: str | None = None) -> list[dic
     if not os.path.exists(targets_file):
         return []
 
-    output_file = f"/tmp/aegis_nuclei_{int(time.time())}.json"
+    output_file = f"/tmp/netspy_nuclei_{int(time.time())}.jsonl"
 
     cmd = [
         "nuclei",
@@ -453,7 +453,7 @@ def run_vuln(input_dir: str, config: dict, output: str) -> dict[str, Any]:
     # -- CVE matching --
     if versions:
         print("  [CVE matching] querying vulnerability databases...")
-        db_path = os.path.expanduser(config.get("vuln", {}).get("cve_db_path", "~/.aegis/cve.db"))
+        db_path = os.path.expanduser(config.get("vuln", {}).get("cve_db_path", "~/.netspy/cve.db"))
         db = init_cve_db(db_path)
 
         cve_findings = match_cves(versions, db)
@@ -491,28 +491,7 @@ def run_vuln(input_dir: str, config: dict, output: str) -> dict[str, Any]:
         print(f"    {len(ssl_findings)} SSL findings")
     print()
 
-    # -- Nuclei scan --
-    urls_path = os.path.join(input_dir, "urls.txt")
-    if os.path.exists(urls_path) and os.path.getsize(urls_path) > 0:
-        print("  [nuclei] running vulnerability templates (this takes a while)...")
-        nuclei_findings = run_nuclei(
-            urls_path,
-            templates_path=config.get("vuln", {}).get("nuclei_templates"),
-        )
-        print(f"    {len(nuclei_findings)} nuclei findings")
-
-        for nf in nuclei_findings:
-            all_findings.append({
-                "type": "nuclei",
-                "id": nf.get("template-id", ""),
-                "name": nf.get("info", {}).get("name", ""),
-                "severity": nf.get("info", {}).get("severity", "UNKNOWN"),
-                "url": nf.get("matched-at", ""),
-                "detail": nf.get("info", {}).get("description", ""),
-                "source": "nuclei",
-            })
-
-    # -- Aggregate and summarize --
+    # -- Build results with everything found so far --
     severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4, "UNKNOWN": 5}
     all_findings.sort(key=lambda x: severity_order.get(x.get("severity", "UNKNOWN"), 99))
 
@@ -534,10 +513,41 @@ def run_vuln(input_dir: str, config: dict, output: str) -> dict[str, Any]:
         "scan_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
-    # Save
     findings_path = os.path.join(output, "findings.json")
+
+    # Save before nuclei (nuclei can crash or OOM)
     with open(findings_path, "w") as f:
         json.dump(result, f, indent=2, default=str)
+
+    # -- Nuclei scan --
+    urls_path = os.path.join(input_dir, "urls.txt")
+    if os.path.exists(urls_path) and os.path.getsize(urls_path) > 0:
+        print("  [nuclei] running vulnerability templates (this takes a while)...")
+        nuclei_findings = run_nuclei(
+            urls_path,
+            templates_path=config.get("vuln", {}).get("nuclei_templates"),
+        )
+        print(f"    {len(nuclei_findings)} nuclei findings")
+
+        if nuclei_findings:
+            for nf in nuclei_findings:
+                all_findings.append({
+                    "type": "nuclei",
+                    "id": nf.get("template-id", ""),
+                    "name": nf.get("info", {}).get("name", ""),
+                    "severity": nf.get("info", {}).get("severity", "UNKNOWN"),
+                    "url": nf.get("matched-at", ""),
+                    "detail": nf.get("info", {}).get("description", ""),
+                    "source": "nuclei",
+                })
+
+            # Re-save with nuclei results
+            result["findings"] = all_findings
+            result["summary"]["total_findings"] = len(all_findings)
+            for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+                result["summary"][s.lower()] = sum(1 for f in all_findings if f.get("severity") == s)
+            with open(findings_path, "w") as f:
+                json.dump(result, f, indent=2, default=str)
 
     # Print summary
     print()

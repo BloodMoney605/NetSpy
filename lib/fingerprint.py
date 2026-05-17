@@ -35,8 +35,8 @@ def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
     if not urls:
         return []
 
-    input_file = f"/tmp/aegis_httpx_input_{int(time.time())}.txt"
-    output_file = f"/tmp/aegis_httpx_out_{int(time.time())}.json"
+    input_file = f"/tmp/netspy_httpx_input_{int(time.time())}.txt"
+    output_file = f"/tmp/netspy_httpx_out_{int(time.time())}.json"
 
     with open(input_file, "w") as f:
         for url in urls:
@@ -204,9 +204,10 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
     httpx_results = run_httpx(urls, threads)
     print(f"{len(httpx_results)} alive")
 
-    # whatweb
-    print("  whatweb deep scan...", end=" ", flush=True)
-    whatweb_results = run_whatweb(urls)
+    # whatweb (limit to 5 to avoid OOM on large targets)
+    ww_limit = min(len(urls), 5)
+    print(f"  whatweb deep scan ({ww_limit}/{len(urls)})...", end=" ", flush=True)
+    whatweb_results = run_whatweb(urls[:ww_limit])
     print(f"{len(whatweb_results)} scanned")
 
     # Extract versions

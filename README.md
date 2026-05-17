@@ -1,19 +1,18 @@
-# aegis-audit
+# NetSPy
 
-Automated vulnerability assessment pipeline for pentesters. Feed it a domain and get a complete report with CVEs, open ports, technologies, and misconfigurations.
+Network surveillance pipeline for reconnaissance and vulnerability assessment. Feed it a domain and get structured data about subdomains, open ports, technologies, and CVEs.
 
 ## Pipeline
 
 ```
-Recon  →  Port Scan  →  Fingerprint  →  CVE Matching  →  HTML Report
-(0)        (1)           (2)             (3 + nuclei)     (4)
+Recon  ->  Port Scan  ->  Fingerprint  ->  CVE Matching  ->  JSON output
+(1)        (2)           (3)             (4 + nuclei)
 ```
 
-- Phase 0: Subdomain enumeration (crt.sh), DNS resolution, WHOIS, ASN
-- Phase 1: Port scan with nmap, service version detection
-- Phase 2: HTTP probing (httpx), technology detection (whatweb), version extraction
-- Phase 3: CVE matching via NVD API, nuclei template scanning, SSL audit
-- Phase 4: Consolidated HTML report with severity cards
+- Phase 1: Subdomain enumeration (crt.sh), DNS resolution, WHOIS, ASN
+- Phase 2: Port scan with nmap, service version detection
+- Phase 3: HTTP probing (httpx), technology detection (whatweb), version extraction
+- Phase 4: CVE matching via NVD API, nuclei template scanning, SSL audit
 
 ## Quick start
 
@@ -22,14 +21,14 @@ Recon  →  Port Scan  →  Fingerprint  →  CVE Matching  →  HTML Report
 bash install.sh
 
 # Audit a domain
-./aegis audit --domain ejemplo.com
+./netspy audit --domain ejemplo.com
 
 # Individual phases
-./aegis recon --domain ejemplo.com
-./aegis scan --target 192.168.1.0/24
+./netspy recon --domain ejemplo.com
+./netspy scan --target 192.168.1.0/24
 
 # Regenerate report from existing data
-./aegis report --dir output/ejemplo.com
+./netspy report --dir output/ejemplo.com
 ```
 
 ## Requirements
@@ -42,19 +41,15 @@ bash install.sh
 
 ```
 output/<domain>/
-├── recon.json           # Phase 0: subdomains, IPs, DNS, WHOIS
+├── recon.json           # Phase 1: subdomains, IPs, DNS, WHOIS
 ├── ips.txt              # Target IP list
-├── ports.json           # Phase 1: open ports, services, versions
+├── ports.json           # Phase 2: open ports, services, versions
 ├── urls.txt             # Web URLs for scanning
-├── tech.json            # Phase 2: technologies, versions, headers
-├── findings.json        # Phase 3: CVEs, nuclei results, misconfigs
-└── report.html          # Phase 4: consolidated HTML report
+├── tech.json            # Phase 3: technologies, versions, headers
+├── findings.json        # Phase 4: CVEs, nuclei results, misconfigs
+└── report.html          # Phase 5: consolidated HTML report
 ```
 
 ## CVE matching
 
-Each detected product:version is queried against the NVD API. Results include CVE ID, severity (CRITICAL/HIGH/MEDIUM/LOW), CVSS score, and description. Results are cached locally in `~/.aegis/cve.db`.
-
-## License
-
-MIT
+Each detected product:version is queried against the NVD API. Results include CVE ID, severity (CRITICAL/HIGH/MEDIUM/LOW), CVSS score, and description. Results are cached locally in `~/.netspy/cve.db`.
