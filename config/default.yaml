@@ -34,6 +34,7 @@ fingerprint:
 vuln:
   cve_db_path: "~/.netspy/cve.db"
   nuclei_templates: "~/.netspy/nuclei-templates"
+  enable_nuclei: false    # nuclei consumes a LOT of memory; enable only if you have 4GB+ free
   severity_min: "medium"  # filter: info, low, medium, high, critical
   enable_checks:
     - cve

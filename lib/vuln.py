@@ -519,35 +519,36 @@ def run_vuln(input_dir: str, config: dict, output: str) -> dict[str, Any]:
     with open(findings_path, "w") as f:
         json.dump(result, f, indent=2, default=str)
 
-    # -- Nuclei scan --
-    urls_path = os.path.join(input_dir, "urls.txt")
-    if os.path.exists(urls_path) and os.path.getsize(urls_path) > 0:
-        print("  [nuclei] running vulnerability templates (this takes a while)...")
-        nuclei_findings = run_nuclei(
-            urls_path,
-            templates_path=config.get("vuln", {}).get("nuclei_templates"),
-        )
-        print(f"    {len(nuclei_findings)} nuclei findings")
+    # -- Nuclei scan (opt-in: enable_nuclei: true in config) --
+    if config.get("vuln", {}).get("enable_nuclei", False):
+        urls_path = os.path.join(input_dir, "urls.txt")
+        if os.path.exists(urls_path) and os.path.getsize(urls_path) > 0:
+            print("  [nuclei] running vulnerability templates (this takes a while)...")
+            nuclei_findings = run_nuclei(
+                urls_path,
+                templates_path=config.get("vuln", {}).get("nuclei_templates"),
+            )
+            print(f"    {len(nuclei_findings)} nuclei findings")
 
-        if nuclei_findings:
-            for nf in nuclei_findings:
-                all_findings.append({
-                    "type": "nuclei",
-                    "id": nf.get("template-id", ""),
-                    "name": nf.get("info", {}).get("name", ""),
-                    "severity": nf.get("info", {}).get("severity", "UNKNOWN"),
-                    "url": nf.get("matched-at", ""),
-                    "detail": nf.get("info", {}).get("description", ""),
-                    "source": "nuclei",
-                })
+            if nuclei_findings:
+                for nf in nuclei_findings:
+                    all_findings.append({
+                        "type": "nuclei",
+                        "id": nf.get("template-id", ""),
+                        "name": nf.get("info", {}).get("name", ""),
+                        "severity": nf.get("info", {}).get("severity", "UNKNOWN"),
+                        "url": nf.get("matched-at", ""),
+                        "detail": nf.get("info", {}).get("description", ""),
+                        "source": "nuclei",
+                    })
 
-            # Re-save with nuclei results
-            result["findings"] = all_findings
-            result["summary"]["total_findings"] = len(all_findings)
-            for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
-                result["summary"][s.lower()] = sum(1 for f in all_findings if f.get("severity") == s)
-            with open(findings_path, "w") as f:
-                json.dump(result, f, indent=2, default=str)
+                # Re-save with nuclei results
+                result["findings"] = all_findings
+                result["summary"]["total_findings"] = len(all_findings)
+                for s in ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]:
+                    result["summary"][s.lower()] = sum(1 for f in all_findings if f.get("severity") == s)
+                with open(findings_path, "w") as f:
+                    json.dump(result, f, indent=2, default=str)
 
     # Print summary
     print()
