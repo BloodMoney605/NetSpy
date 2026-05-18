@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NETSPY_ROOT="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_PATH="$(readlink -f "$0")"
+NETSPY_ROOT="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 export NETSPY_ROOT
 export NETSPY_CONFIG="${NETSPY_CONFIG:-$NETSPY_ROOT/config/default.yaml}"
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
