@@ -23,6 +23,18 @@ from urllib.request import urlopen, Request
 from common import load_config, apply_thread_override
 
 
+COMMON_SUBS = [
+    "www", "mail", "ftp", "smtp", "pop", "imap", "webmail",
+    "dns", "ns1", "ns2", "mx", "mx1", "mx2", "cpanel",
+    "whm", "autodiscover", "admin", "login", "api", "app",
+    "dev", "staging", "test", "blog", "shop", "store",
+    "cdn", "static", "assets", "media", "images", "files",
+    "portal", "dashboard", "support", "help", "docs",
+    "vpn", "remote", "cloud", "db", "database", "git",
+    "jenkins", "monitor", "status", "mail2", "web",
+]
+
+
 def run_cmd(cmd: list[str], timeout: int = 15) -> str | None:
     """Run a shell command and return stdout. Returns None on failure."""
     try:
@@ -62,8 +74,6 @@ def crtsh_subdomains(domain: str) -> list[str]:
 
     return sorted(subdomains)
 
-
-import re
 
 def dns_resolve(subdomain: str, record_type: str = "A") -> list[str]:
     """Resolve DNS records for a given name and type. Only returns valid IPv4 for A records."""
@@ -161,18 +171,6 @@ def collect_unique_ips(resolved: dict[str, list[str]]) -> list[str]:
                 seen.add(ip)
                 ips.append(ip)
     return ips
-
-
-COMMON_SUBS = [
-    "www", "mail", "ftp", "smtp", "pop", "imap", "webmail",
-    "dns", "ns1", "ns2", "mx", "mx1", "mx2", "cpanel",
-    "whm", "autodiscover", "admin", "login", "api", "app",
-    "dev", "staging", "test", "blog", "shop", "store",
-    "cdn", "static", "assets", "media", "images", "files",
-    "portal", "dashboard", "support", "help", "docs",
-    "vpn", "remote", "cloud", "db", "database", "git",
-    "jenkins", "monitor", "status", "mail2", "web",
-]
 
 
 def normalize_domain(domain: str) -> str:

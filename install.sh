@@ -12,7 +12,6 @@ PKGS=(
     whois
     jq
     whatweb
-    masscan
     openssl
 )
 
@@ -47,6 +46,7 @@ done
 PY_PKGS=(
     pyyaml
     requests
+    jinja2
 )
 
 echo "[*] installing Python packages..."
@@ -59,10 +59,14 @@ if command -v nuclei &>/dev/null; then
     nuclei -update -ut > /dev/null 2>&1 || true
 fi
 
-# -- Database init --
+# -- Data directory --
 echo "[*] creating data directory..."
 mkdir -p ~/.netspy
 
+# -- Add netspy to PATH --
+echo "[*] linking netspy to /usr/local/bin..."
+sudo ln -sf "$(pwd)/netspy" /usr/local/bin/netspy
+
 echo
 echo "[+] installation complete."
-echo "    run: ./netspy audit --domain example.com"
+echo "    run: netspy audit --domain example.com"
