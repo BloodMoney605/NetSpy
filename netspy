@@ -120,12 +120,14 @@ cmd_audit() {
     local domain=""
     local config="$NETSPY_CONFIG"
     local output=""
+    local threads=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --domain) domain="$2"; shift 2 ;;
             --config) config="$2"; shift 2 ;;
             --output) output="$2"; shift 2 ;;
+            --threads) threads="$2"; shift 2 ;;
             *) phase_fail "unknown option: $1"; exit 1 ;;
         esac
     done
@@ -140,15 +142,21 @@ cmd_audit() {
     fi
     mkdir -p "$output"
 
+    local thread_args=()
+    if [ -n "$threads" ]; then
+        thread_args=(--threads "$threads")
+    fi
+
     echo -e "${CYAN}========================================${NC}"
     echo -e "${CYAN} NetSPy${NC}"
     echo -e "${CYAN} Target: $domain${NC}"
     echo -e "${CYAN} Output: $output${NC}"
+    echo -e "${CYAN} Threads: ${threads:-config default}${NC}"
     echo -e "${CYAN}========================================${NC}"
 
     # Phase 1: Recon
     phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
-    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
     if [ ! -f "$output/recon.json" ]; then
         phase_fail "recon phase produced no output"
         exit 1
@@ -164,17 +172,17 @@ cmd_audit() {
     fi
 
     phase_info "2" "Port and service scanning"
-    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "scan data saved to $output/ports.json"
 
     # Phase 3: Fingerprint
     phase_info "3" "Technology fingerprinting"
-    python3 "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "fingerprint data saved to $output/tech.json"
 
     # Phase 4: Vulnerability scan
     phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
-    python3 "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "vulnerability data saved to $output/findings.json"
 
     # Phase 5: Report
@@ -193,12 +201,14 @@ cmd_recon() {
     local domain=""
     local config="$NETSPY_CONFIG"
     local output=""
+    local threads=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --domain) domain="$2"; shift 2 ;;
             --config) config="$2"; shift 2 ;;
             --output) output="$2"; shift 2 ;;
+            --threads) threads="$2"; shift 2 ;;
             *) phase_fail "unknown option: $1"; exit 1 ;;
         esac
     done
@@ -213,7 +223,12 @@ cmd_recon() {
     fi
     mkdir -p "$output"
 
-    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output"
+    local thread_args=()
+    if [ -n "$threads" ]; then
+        thread_args=(--threads "$threads")
+    fi
+
+    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "recon data saved to $output/recon.json"
 }
 
@@ -223,12 +238,14 @@ cmd_scan() {
     local targets=""
     local config="$NETSPY_CONFIG"
     local output=""
+    local threads=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --target) targets="$2"; shift 2 ;;
             --config) config="$2"; shift 2 ;;
             --output) output="$2"; shift 2 ;;
+            --threads) threads="$2"; shift 2 ;;
             *) phase_fail "unknown option: $1"; exit 1 ;;
         esac
     done
@@ -243,8 +260,13 @@ cmd_scan() {
     fi
     mkdir -p "$output"
 
+    local thread_args=()
+    if [ -n "$threads" ]; then
+        thread_args=(--threads "$threads")
+    fi
+
     echo "$targets" > "$output/targets.txt"
-    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output"
+    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "scan data saved to $output/ports.json"
 }
 

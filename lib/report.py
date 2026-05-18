@@ -19,6 +19,8 @@ except ImportError:
     print("[!] jinja2 not installed. run: pip3 install jinja2")
     exit(1)
 
+from common import load_config
+
 
 REPORT_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -257,8 +259,10 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--threads", type=int, default=None)
     args = parser.parse_args()
 
+    config = load_config(args.config)
     os.makedirs(args.output, exist_ok=True)
     generate_report(args.input, args.output)
 

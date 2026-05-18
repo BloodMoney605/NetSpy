@@ -12,6 +12,7 @@ Phase 1: Reconnaissance
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -19,15 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.request import urlopen, Request
 
-
-def load_config(config_path: str) -> dict:
-    """Load YAML config. Returns dict with defaults if config missing."""
-    try:
-        import yaml
-        with open(config_path) as f:
-            return yaml.safe_load(f) or {}
-    except Exception:
-        return {}
+from common import load_config, apply_thread_override
 
 
 def run_cmd(cmd: list[str], timeout: int = 15) -> str | None:
@@ -70,12 +63,18 @@ def crtsh_subdomains(domain: str) -> list[str]:
     return sorted(subdomains)
 
 
+import re
+
 def dns_resolve(subdomain: str, record_type: str = "A") -> list[str]:
-    """Resolve DNS records for a given name and type."""
+    """Resolve DNS records for a given name and type. Only returns valid IPv4 for A records."""
     result = run_cmd(["dig", "+short", record_type, subdomain])
     if not result:
         return []
-    return [line.strip() for line in result.split("\n") if line.strip()]
+    lines = [line.strip() for line in result.split("\n") if line.strip()]
+    if record_type == "A":
+        ipv4_re = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
+        return [l for l in lines if ipv4_re.match(l)]
+    return lines
 
 
 def dns_enum(domain: str) -> dict[str, Any]:
@@ -248,9 +247,11 @@ def main() -> None:
     parser.add_argument("--domain", required=True)
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--threads", type=int, default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
+    config = apply_thread_override(config, args.threads)
     os.makedirs(args.output, exist_ok=True)
 
     run_recon(args.domain, config, args.output)

@@ -16,14 +16,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-
-def load_config(config_path: str) -> dict:
-    try:
-        import yaml
-        with open(config_path) as f:
-            return yaml.safe_load(f) or {}
-    except Exception:
-        return {}
+from common import load_config, apply_thread_override
 
 
 def load_targets(targets_path: str) -> list[str]:
@@ -399,9 +392,11 @@ def main() -> None:
     parser.add_argument("--targets", required=True, help="file with targets (one per line)")
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--threads", type=int, default=None)
     args = parser.parse_args()
 
     config = load_config(args.config)
+    config = apply_thread_override(config, args.threads)
     os.makedirs(args.output, exist_ok=True)
 
     run_scan(args.targets, config, args.output)
