@@ -162,15 +162,16 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
     """Execute fingerprinting phase."""
     urls_path = os.path.join(input_dir, "urls.txt")
     ports_path = os.path.join(input_dir, "ports.json")
+    recon_path = os.path.join(input_dir, "recon.json")
 
     # Collect URLs to probe
     urls: list[str] = []
 
+    # From ports.json (open ports with http/https)
     if os.path.exists(urls_path):
         with open(urls_path) as f:
             urls = [line.strip() for line in f if line.strip()]
 
-    # Also check ports.json for web services
     if os.path.exists(ports_path):
         with open(ports_path) as f:
             try:
@@ -183,6 +184,27 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
                             urls.append(url)
             except Exception:
                 pass
+
+    # From recon.json (all resolved subdomains)
+    if os.path.exists(recon_path):
+        with open(recon_path) as f:
+            try:
+                recon_data = json.load(f)
+                domain = recon_data.get("domain", "")
+                for sub in recon_data.get("resolved", {}):
+                    urls.append(f"http://{sub}/")
+                    urls.append(f"https://{sub}/")
+            except Exception:
+                pass
+
+    # Deduplicate
+    seen: set[str] = set()
+    unique_urls: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            unique_urls.append(u)
+    urls = unique_urls
 
     if not urls:
         print("  [!] no URLs to fingerprint")
@@ -197,10 +219,11 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
     httpx_results = run_httpx(urls, threads)
     print(f"{len(httpx_results)} alive")
 
-    # whatweb (limit to 5 to avoid OOM on large targets)
-    ww_limit = min(len(urls), 5)
-    print(f"  whatweb deep scan ({ww_limit}/{len(urls)})...", end=" ", flush=True)
-    whatweb_results = run_whatweb(urls[:ww_limit])
+    # whatweb (limit to 10 to avoid OOM)
+    ww_limit = config.get("fingerprint", {}).get("whatweb_limit", 10)
+    ww_actual = min(len(urls), ww_limit)
+    print(f"  whatweb deep scan ({ww_actual}/{len(urls)})...", end=" ", flush=True)
+    whatweb_results = run_whatweb(urls[:ww_actual])
     print(f"{len(whatweb_results)} scanned")
 
     # Extract versions

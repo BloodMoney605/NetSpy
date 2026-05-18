@@ -29,7 +29,8 @@ fingerprint:
   http_probe: true
   extract_versions: true
   detect_waf: true
-  screenshot: false     # requires gowitness
+  whatweb_limit: 10       # max subdomains to scan with whatweb (heavy)
+  screenshot: false       # requires gowitness
 
 vuln:
   cve_db_path: "~/.netspy/cve.db"
