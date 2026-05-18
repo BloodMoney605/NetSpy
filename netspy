@@ -13,6 +13,9 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
 DIM='\033[2m'
+MAGENTA='\033[0;35m'
+ORANGE='\033[0;38;5;208m'
+WHITE='\033[1;37m'
 NC='\033[0m'
 
 # language
@@ -20,23 +23,17 @@ LANG="${NETSPY_LANG:-en}"
 
 # i18n strings
 t_banner() {
-    if [ "$LANG" = "es" ]; then
-        echo -e "${BOLD}${CYAN}  _   _      _ _       ${NC}"
-        echo -e "${BOLD}${CYAN} | \ | | ___| | | ___  ${NC}"
-        echo -e "${BOLD}${CYAN} |  \| |/ _ \ | |/ _ \ ${NC}"
-        echo -e "${BOLD}${CYAN} | |\  |  __/ | | (_) |${NC}"
-        echo -e "${BOLD}${CYAN} |_| \_|\___|_|_|\___/ ${NC}"
-        echo -e "${BOLD}${CYAN}                       ${NC}"
-        echo -e "${CYAN}  Network Surveillance Pipeline${NC}"
-    else
-        echo -e "${BOLD}${CYAN}  _   _      _ _       ${NC}"
-        echo -e "${BOLD}${CYAN} | \ | | ___| | | ___  ${NC}"
-        echo -e "${BOLD}${CYAN} |  \| |/ _ \ | |/ _ \ ${NC}"
-        echo -e "${BOLD}${CYAN} | |\  |  __/ | | (_) |${NC}"
-        echo -e "${BOLD}${CYAN} |_| \_|\___|_|_|\___/ ${NC}"
-        echo -e "${BOLD}${CYAN}                       ${NC}"
-        echo -e "${CYAN}  Network Surveillance Pipeline${NC}"
-    fi
+    echo -e "${BOLD}${MAGENTA}"
+    echo -e " ███╗   ██╗███████╗ ██████╗ ███╗   ██╗"
+    echo -e " ████╗  ██║██╔════╝██╔═══██╗████╗  ██║"
+    echo -e " ██╔██╗ ██║█████╗  ██║   ██║██╔██╗ ██║"
+    echo -e " ██║╚██╗██║██╔══╝  ██║   ██║██║╚██╗██║"
+    echo -e " ██║ ╚████║███████╗╚██████╔╝██║ ╚████║"
+    echo -e " ╚═╝  ╚═══╝╚══════╝ ╚═════╝ ╚═╝  ╚═══╝"
+    echo -e "${NC}"
+    echo -e "  ${CYAN}Network Surveillance Pipeline${NC}"
+    echo -e "  ${DIM}Creator: BloodMoney605${NC}"
+    echo -e ""
 }
 
 t_menu_title() {

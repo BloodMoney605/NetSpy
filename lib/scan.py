@@ -18,6 +18,11 @@ from typing import Any
 
 from common import load_config, apply_thread_override
 
+BOLD = "\033[1m"
+CYAN = "\033[0;36m"
+GREEN = "\033[0;32m"
+NC = "\033[0m"
+
 
 def load_targets(targets_path: str) -> list[str]:
     """Load target IPs from file. Resolves domains if needed."""
@@ -365,7 +370,17 @@ def run_scan(targets_path: str, config: dict, output: str) -> dict[str, Any]:
     # Generate aux files
     services = results.get("services", [])
     unique_services = len(set(s["service"] for s in services if s.get("service")))
-    print(f"  services detected: {unique_services}")
+    print(f"  {BOLD}Services detected: {unique_services}{NC}")
+    if services:
+        print(f"  {BOLD}{'─' * 50}{NC}")
+        for s in services:
+            proto = s.get("service", "?")
+            port = s["port"]
+            ip = s["ip"]
+            product = s.get("product", "")
+            version = s.get("version", "")
+            ver_str = f" {product} {version}" if product else ""
+            print(f"  {GREEN}{ip}{NC}:{port}/{proto}{ver_str}")
 
     svc_path = os.path.join(output, "services.txt")
     with open(svc_path, "w") as f:

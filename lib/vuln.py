@@ -21,6 +21,10 @@ from urllib.request import Request, urlopen
 
 from common import load_config, apply_thread_override
 
+BOLD = "\033[1m"
+DIM = "\033[2m"
+NC = "\033[0m"
+
 
 # ============================================================
 # CVE Database (SQLite local cache)
@@ -543,31 +547,53 @@ def run_vuln(input_dir: str, config: dict, output: str) -> dict[str, Any]:
                 with open(findings_path, "w") as f:
                     json.dump(result, f, indent=2, default=str)
 
+    # Colors for console output
+    SEV_COLORS = {
+        "CRITICAL": "\033[1;31m",  # bold red
+        "HIGH":     "\033[0;31m",  # red
+        "MEDIUM":   "\033[0;33m",  # yellow
+        "LOW":      "\033[0;36m",  # cyan
+        "INFO":     "\033[0;37m",  # white
+    }
+    NC = "\033[0m"
+
     # Print summary
     print()
-    print(f"  === Vulnerability Summary ===")
-    print(f"  Total:  {result['summary']['total_findings']}")
-    print(f"  Critical: {result['summary']['critical']}")
-    print(f"  High:     {result['summary']['high']}")
-    print(f"  Medium:   {result['summary']['medium']}")
-    print(f"  Low:      {result['summary']['low']}")
-    print(f"  Info:     {result['summary']['info']}")
+    print(f"  {BOLD}Vulnerability Summary{NC}")
+    print(f"  {BOLD}{'─' * 40}{NC}")
+    print(f"  Total:    {BOLD}{result['summary']['total_findings']}{NC}")
+    sev = result['summary']
+    if sev['critical']:
+        print(f"  {SEV_COLORS['CRITICAL']}Critical: {sev['critical']}{NC}")
+    if sev['high']:
+        print(f"  {SEV_COLORS['HIGH']}High:     {sev['high']}{NC}")
+    if sev['medium']:
+        print(f"  {SEV_COLORS['MEDIUM']}Medium:   {sev['medium']}{NC}")
+    if sev['low']:
+        print(f"  {SEV_COLORS['LOW']}Low:      {sev['low']}{NC}")
+    if sev['info']:
+        print(f"  {SEV_COLORS['INFO']}Info:     {sev['info']}{NC}")
     print()
 
     if all_findings:
-        print("  Top findings:")
-        for f in all_findings[:10]:
+        print(f"  {BOLD}Findings{NC}")
+        print(f"  {BOLD}{'─' * 60}{NC}")
+        for f in all_findings:
             sev = f.get("severity", "?")
             fid = f.get("id", f.get("name", "?"))
             prod = f.get("product", "")
             ver = f.get("version", "")
-            detail = f.get("detail", "")[:80]
+            detail = (f.get("summary") or f.get("detail", ""))[:100]
+            color = SEV_COLORS.get(sev, "")
+            badge = f"{color}[{sev}]{NC}"
             if prod and ver:
-                print(f"    [{sev}] {fid} | {prod} {ver} | {detail}")
+                print(f"  {badge} {fid} | {prod} {ver}")
             else:
-                print(f"    [{sev}] {fid} | {detail}")
-        if len(all_findings) > 10:
-            print(f"    ... and {len(all_findings) - 10} more")
+                print(f"  {badge} {fid}")
+            if detail:
+                print(f"         {DIM}{detail}{NC}")
+        if len(all_findings) > 20:
+            print(f"  {DIM}... and {len(all_findings) - 20} more{NC}")
 
     print(f"\n  output: {findings_path}")
     return result

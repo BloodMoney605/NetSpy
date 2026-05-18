@@ -22,6 +22,12 @@ from urllib.request import urlopen, Request
 
 from common import load_config, apply_thread_override
 
+BOLD = "\033[1m"
+GREEN = "\033[0;32m"
+CYAN = "\033[0;36m"
+DIM = "\033[2m"
+NC = "\033[0m"
+
 
 COMMON_SUBS = [
     "www", "mail", "ftp", "smtp", "pop", "imap", "webmail",
@@ -282,10 +288,17 @@ def run_recon(domain: str, config: dict, output: str) -> dict[str, Any]:
         for sub in resolved:
             f.write(sub + "\n")
 
-    print(f"  output files:\n"
-          f"    {recon_path}\n"
-          f"    {ips_path}\n"
-          f"    {subs_path}")
+    print(f"\n  {BOLD}Recon Summary{NC}")
+    print(f"  {BOLD}{'─' * 40}{NC}")
+    print(f"  Subdomains: {GREEN}{len(subs)}{NC}")
+    print(f"  Resolved:   {GREEN}{len(resolved)}{NC}")
+    print(f"  Unique IPs: {CYAN}{len(ips)}{NC}")
+    if ips:
+        print(f"\n  {BOLD}Top IPs{NC}")
+        for ip in ips[:10]:
+            print(f"  {GREEN}{ip}{NC}")
+        if len(ips) > 10:
+            print(f"  {DIM}... and {len(ips) - 10} more{NC}")
 
     return result
 

@@ -18,6 +18,13 @@ from typing import Any
 
 from common import load_config, apply_thread_override
 
+BOLD = "\033[1m"
+CYAN = "\033[0;36m"
+GREEN = "\033[0;32m"
+YELLOW = "\033[0;33m"
+DIM = "\033[2m"
+NC = "\033[0m"
+
 
 def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
     """
@@ -281,14 +288,26 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
     # Print summary
     print()
     if technologies:
-        print(f"  technologies found:")
+        print(f"  {BOLD}Technologies found{NC}")
+        print(f"  {BOLD}{'─' * 40}{NC}")
+        seen: set[str] = set()
         for t in technologies:
+            key = f"{t['name']}|{t['version']}"
+            if key in seen:
+                continue
+            seen.add(key)
             ver_str = f" {t['version']}" if t['version'] else ""
-            print(f"    - {t['name']}{ver_str}")
+            print(f"  {YELLOW}{t['name']}{NC}{ver_str} {DIM}({t['source']}){NC}")
     if versions:
-        print(f"\n  version strings extracted ({len(versions)}):")
+        print(f"\n  {BOLD}Version strings ({len(versions)}){NC}")
+        print(f"  {BOLD}{'─' * 40}{NC}")
+        seen_v: set[str] = set()
         for v in versions:
-            print(f"    {v['product']} {v['version']}  (from {v['source']})")
+            key = f"{v['product']}|{v['version']}"
+            if key in seen_v:
+                continue
+            seen_v.add(key)
+            print(f"  {GREEN}{v['product']}{NC} {v['version']} {DIM}(from {v['source']}){NC}")
 
     print(f"\n  output: {tech_path}")
     return result
