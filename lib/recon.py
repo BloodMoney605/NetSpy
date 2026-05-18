@@ -163,20 +163,70 @@ def collect_unique_ips(resolved: dict[str, list[str]]) -> list[str]:
     return ips
 
 
+COMMON_SUBS = [
+    "www", "mail", "ftp", "smtp", "pop", "imap", "webmail",
+    "dns", "ns1", "ns2", "mx", "mx1", "mx2", "cpanel",
+    "whm", "autodiscover", "admin", "login", "api", "app",
+    "dev", "staging", "test", "blog", "shop", "store",
+    "cdn", "static", "assets", "media", "images", "files",
+    "portal", "dashboard", "support", "help", "docs",
+    "vpn", "remote", "cloud", "db", "database", "git",
+    "jenkins", "monitor", "status", "mail2", "web",
+]
+
+
+def normalize_domain(domain: str) -> str:
+    """Strip www. prefix and trailing dots to get the base domain."""
+    domain = domain.strip().rstrip(".")
+    if domain.startswith("www."):
+        domain = domain[4:]
+    parts = domain.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return domain
+
+
+def brute_subdomains(domain: str, threads: int = 20) -> list[str]:
+    """Resolve common subdomain wordlist. Fast fallback when CT logs fail."""
+    found: list[str] = []
+
+    def check(sub: str) -> str | None:
+        full = f"{sub}.{domain}"
+        ips = dns_resolve(full, "A")
+        return full if ips else None
+
+    with ThreadPoolExecutor(max_workers=threads) as pool:
+        futures = {pool.submit(check, s): s for s in COMMON_SUBS}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                found.append(result)
+
+    return sorted(found)
+
+
 def run_recon(domain: str, config: dict, output: str) -> dict[str, Any]:
     """Execute full reconnaissance phase."""
-    print(f"  domain:              {domain}")
-    print(f"  subdomain sources:   crt.sh")
+    base_domain = normalize_domain(domain)
+
+    print(f"  domain:              {base_domain}")
+    print(f"  subdomain sources:   crt.sh + wordlist fallback")
     print()
 
     # -- Subdomain enumeration --
     print("  enumerating subdomains via crt.sh...", end=" ", flush=True)
-    subs = crtsh_subdomains(domain)
+    subs = crtsh_subdomains(base_domain)
     print(f"{len(subs)} found")
 
+    if not subs:
+        print("  [!] crt.sh failed or returned empty, using wordlist fallback...")
+        print("  wordlist brute-force...", end=" ", flush=True)
+        subs = brute_subdomains(base_domain, threads=config.get("target", {}).get("threads", 20))
+        print(f"{len(subs)} found")
+
     # Always include base domain
-    if domain not in subs:
-        subs.insert(0, domain)
+    if base_domain not in subs:
+        subs.insert(0, base_domain)
 
     # -- DNS resolution --
     print(f"  resolving {len(subs)} subdomains...", end=" ", flush=True)
@@ -187,11 +237,11 @@ def run_recon(domain: str, config: dict, output: str) -> dict[str, Any]:
     ips = collect_unique_ips(resolved)
 
     # -- Base domain DNS records --
-    dns_records = dns_enum(domain)
+    dns_records = dns_enum(base_domain)
 
     # -- WHOIS --
     print("  whois lookup...", end=" ", flush=True)
-    whois = whois_lookup(domain)
+    whois = whois_lookup(base_domain)
     print("done")
 
     # -- ASN per IP (first 5 to be reasonable) --
@@ -204,7 +254,7 @@ def run_recon(domain: str, config: dict, output: str) -> dict[str, Any]:
 
     # -- Build output --
     result: dict[str, Any] = {
-        "domain": domain,
+        "domain": base_domain,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "subdomains": subs,
         "subdomains_count": len(subs),
