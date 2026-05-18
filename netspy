@@ -297,6 +297,48 @@ cmd_scan() {
     phase_ok "scan data saved to $output/ports.json"
 }
 
+cmd_scan_full() {
+    check_deps || exit 1
+    local domain="$1"
+    local threads="${2:-}"
+    local config="$NETSPY_CONFIG"
+    local output="$NETSPY_ROOT/output/$domain"
+    mkdir -p "$output"
+    local thread_args=()
+    if [ -n "$threads" ]; then
+        thread_args=(--threads "$threads")
+    fi
+    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN} NetSPy — Scan (no report)${NC}"
+    echo -e "${CYAN} Target: $domain${NC}"
+    echo -e "${CYAN} Output: $output${NC}"
+    echo -e "${CYAN}========================================${NC}"
+    phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
+    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
+    if [ ! -f "$output/recon.json" ]; then
+        phase_fail "recon phase produced no output"
+        exit 1
+    fi
+    phase_ok "recon data saved to $output/recon.json"
+    local targets="$output/targets.txt"
+    if [ -f "$output/ips.txt" ]; then
+        cp "$output/ips.txt" "$targets"
+    else
+        echo "$domain" > "$targets"
+    fi
+    phase_info "2" "Port and service scanning"
+    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output" "${thread_args[@]}"
+    phase_ok "scan data saved to $output/ports.json"
+    phase_info "3" "Technology fingerprinting"
+    python3 "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
+    phase_ok "fingerprint data saved to $output/tech.json"
+    phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
+    python3 "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
+    phase_ok "vulnerability data saved to $output/findings.json"
+    echo -e "\n${GREEN}[+] Scan complete.${NC}"
+    echo -e "  Data: ${CYAN}$output/${NC}"
+}
+
 cmd_report() {
     local input="$1"
     python3 "$NETSPY_ROOT/lib/report.py" --input "$input" --output "$input"
@@ -319,18 +361,20 @@ interactive_menu() {
         t_banner
         t_menu_title
         if [ "$LANG" = "es" ]; then
-            t_menu_item "1" "Auditar dominio (pipeline completo)"
-            t_menu_item "2" "Reconocimiento (solo subdominios/DNS)"
-            t_menu_item "3" "Escaneo de puertos (IP/rango)"
-            t_menu_item "4" "Generar reporte (datos existentes)"
-            t_menu_item "5" "Instalar dependencias"
+            t_menu_item "1" "Auditar dominio (pipeline completo con reporte)"
+            t_menu_item "2" "Escanear dominio (recon + scan + fingerprint + CVEs)"
+            t_menu_item "3" "Reconocimiento (solo subdominios/DNS)"
+            t_menu_item "4" "Escaneo de puertos (IP/rango)"
+            t_menu_item "5" "Generar reporte (datos existentes)"
+            t_menu_item "6" "Instalar dependencias"
             t_menu_item "q" "Salir"
         else
-            t_menu_item "1" "Audit domain (full pipeline)"
-            t_menu_item "2" "Reconnaissance (subdomains/DNS only)"
-            t_menu_item "3" "Port scan (IP/range)"
-            t_menu_item "4" "Generate report (existing data)"
-            t_menu_item "5" "Install dependencies"
+            t_menu_item "1" "Audit domain (full pipeline with report)"
+            t_menu_item "2" "Scan domain (recon + scan + fingerprint + CVEs)"
+            t_menu_item "3" "Reconnaissance (subdomains/DNS only)"
+            t_menu_item "4" "Port scan (IP/range)"
+            t_menu_item "5" "Generate report (existing data)"
+            t_menu_item "6" "Install dependencies"
             t_menu_item "q" "Quit"
         fi
         t_prompt
@@ -350,9 +394,17 @@ interactive_menu() {
                 t_threads_prompt
                 read -r threads
                 t_running
-                cmd_recon "$domain" "$threads"
+                cmd_scan_full "$domain" "$threads"
                 ;;
             3)
+                t_domain_prompt
+                read -r domain
+                t_threads_prompt
+                read -r threads
+                t_running
+                cmd_recon "$domain" "$threads"
+                ;;
+            4)
                 t_target_prompt
                 read -r target
                 t_threads_prompt
@@ -360,13 +412,13 @@ interactive_menu() {
                 t_running
                 cmd_scan "$target" "$threads"
                 ;;
-            4)
+            5)
                 t_dir_prompt
                 read -r dir
                 t_running
                 cmd_report "$dir"
                 ;;
-            5)
+            6)
                 cmd_doctor
                 ;;
             q|Q)
@@ -386,8 +438,9 @@ interactive_menu() {
 if [ $# -gt 0 ]; then
     case "$1" in
         audit)  shift; cmd_audit "$@" ;;
+        scan)   shift; cmd_scan_full "$@" ;;
         recon)  shift; cmd_recon "$@" ;;
-        scan)   shift; cmd_scan "$@" ;;
+        portscan) shift; cmd_scan "$@" ;;
         report) shift; cmd_report "$@" ;;
         doctor) cmd_doctor ;;
         help|--help|-h)
@@ -395,9 +448,10 @@ if [ $# -gt 0 ]; then
 NetSPy — Network surveillance pipeline
 
 Usage:
-  netspy audit   --domain <domain>    Run full pipeline against a domain
+  netspy audit   --domain <domain>    Run full pipeline (phases 1-5)
+  netspy scan    --domain <domain>    Scan domain (phases 1-4, no report)
   netspy recon   --domain <domain>    Phase 1: subdomain + dns recon only
-  netspy scan    --target <ip/range>  Phase 2: port scan only
+  netspy portscan --target <ip/range> Phase 2: port scan only
   netspy report  --dir <output_dir>   Generate report from existing output
   netspy doctor                       Check and install dependencies
   netspy help                         Show this help
@@ -411,8 +465,9 @@ Options:
 
 Examples:
   netspy audit --domain ejemplo.com
+  netspy scan --domain ejemplo.com
   netspy recon --domain ejemplo.com --threads 50
-  netspy scan --target 192.168.1.0/24 --output ./results
+  netspy portscan --target 192.168.1.0/24 --output ./results
   netspy report --dir ./output/ejemplo.com
 EOF
             ;;
