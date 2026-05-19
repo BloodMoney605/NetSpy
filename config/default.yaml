@@ -1,4 +1,4 @@
-# NetSPy configuration
+# NetSpy configuration
 # Override any value with --config /path/to/custom.yaml
 
 target:
@@ -43,6 +43,6 @@ vuln:
     - exp
 
 report:
-  format: "html"
+  format: "txt"
   include_evidence: true
   open_browser: false

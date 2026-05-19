@@ -3,6 +3,5 @@ __pycache__/
 *.pyc
 .env
 config/local.yaml
-~/.netspy/
 tmp/
 *.log

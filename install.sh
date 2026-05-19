@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[+] NetSPy installer"
+echo "[+] NetSpy installer"
 echo "    target: $(uname -m)-$(uname -s)"
 
 # -- System packages --
 PKGS=(
     nmap
-    curl
     dnsutils
     whois
-    jq
     whatweb
     openssl
 )
@@ -45,8 +43,6 @@ done
 # -- Python packages --
 PY_PKGS=(
     pyyaml
-    requests
-    jinja2
 )
 
 echo "[*] installing Python packages..."

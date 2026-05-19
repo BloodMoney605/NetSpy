@@ -24,10 +24,21 @@ LANG="${NETSPY_LANG:-en}"
 
 # i18n strings
 t_banner() {
-    echo -e "${BOLD}${MAGENTA}"
-    echo -e ""
-    echo -e "    NetSPy"
-    echo -e ""
+    echo -e "${BOLD}${WHITE}"
+    echo -e " ___      ___                  ____                       "
+    echo -e "\`MM\     \`M'                 6MMMMb\                     "
+    echo -e " MMM\     M           /     6M'    \`                     "
+    echo -e " M\MM\    M   ____   /M     MM      __ ____  ____    ___ "
+    echo -e " M \MM\   M  6MMMMb /MMMMM  YM.     \`M6MMMMb \`MM(    )M'"
+    echo -e " M  \MM\  M 6M'  \`Mb MM      YMMMMb  MM'  \`Mb \`Mb    d'  "
+    echo -e " M   \MM\ M MM    MM MM          \`Mb MM    MM   YM.  ,P   "
+    echo -e " M    \MM\M MMMMMMMM MM           MM MM    MM   MM  M    "
+    echo -e " M     \MMM MM       MM           MM MM    MM   \`Mbd'    "
+    echo -e " M      \MM YM    d9 YM.  , L    ,M9 MM.  ,M9    YMP     "
+    echo -e "_M_      \M  YMMMM9   YMMM9 MYMMMM9  MMYMMM9      M      "
+    echo -e "                                     MM          d'      "
+    echo -e "                                     MM      (8),P       "
+    echo -e "                                    _MM_      YMM        "
     echo -e "${NC}"
     echo -e "  ${DIM}Creator: BloodMoney605${NC}"
     echo -e ""
@@ -35,9 +46,9 @@ t_banner() {
 
 t_menu_title() {
     if [ "$LANG" = "es" ]; then
-        echo -e "\n  ${BOLD}Menu principal${NC}"
+        echo -e "  ${BOLD}Menu principal${NC}"
     else
-        echo -e "\n  ${BOLD}Main menu${NC}"
+        echo -e "  ${BOLD}Main menu${NC}"
     fi
 }
 
@@ -126,7 +137,7 @@ phase_fail() {
 
 check_deps() {
     local missing=0
-    local tools=("python3" "nmap" "curl" "dig" "whois")
+    local tools=("python3" "nmap" "dig" "whois" "openssl")
     for tool in "${tools[@]}"; do
         if ! command -v "$tool" &>/dev/null; then
             phase_fail "missing: $tool"
@@ -149,10 +160,9 @@ cmd_doctor() {
     local pkgs=()
     local gopkgs=()
     command -v nmap       &>/dev/null || pkgs+=("nmap")
-    command -v curl       &>/dev/null || pkgs+=("curl")
     command -v dig        &>/dev/null || pkgs+=("dnsutils")
     command -v whois      &>/dev/null || pkgs+=("whois")
-    command -v jq         &>/dev/null || pkgs+=("jq")
+    command -v openssl    &>/dev/null || pkgs+=("openssl")
     command -v whatweb    &>/dev/null || pkgs+=("whatweb")
     command -v nuclei     &>/dev/null || gopkgs+=("github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest")
     command -v httpx      &>/dev/null || gopkgs+=("github.com/projectdiscovery/httpx/cmd/httpx@latest")
@@ -167,8 +177,8 @@ cmd_doctor() {
         done
         export PATH="$HOME/go/bin:$PATH"
     fi
-    echo "Installing Python packages: pyyaml requests jinja2"
-    pip3 install -q pyyaml requests jinja2
+    echo "Installing Python packages: pyyaml"
+    pip3 install -q pyyaml
     echo -e "${GREEN}[+] All dependencies installed.${NC}"
 }
 
@@ -184,7 +194,14 @@ cmd_audit() {
             --config) config="$2"; shift 2 ;;
             --output) output="$2"; shift 2 ;;
             --threads) threads="$2"; shift 2 ;;
-            *) if [ -z "$domain" ]; then domain="$1"; fi; shift ;;
+            *)
+                if [ -z "$domain" ]; then
+                    domain="$1"
+                elif [ -z "$threads" ]; then
+                    threads="$1"
+                fi
+                shift
+                ;;
         esac
     done
     if [ -z "$domain" ]; then
@@ -192,7 +209,9 @@ cmd_audit() {
         exit 1
     fi
     if [ -z "$output" ]; then
-        output="$NETSPY_ROOT/output/$domain"
+        local clean_domain
+        clean_domain="$(sanitize_domain "$domain")"
+        output="$NETSPY_ROOT/output/$clean_domain"
     fi
     mkdir -p "$output"
     local thread_args=()
@@ -200,13 +219,13 @@ cmd_audit() {
         thread_args=(--threads "$threads")
     fi
     echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN} NetSPy${NC}"
+    echo -e "${CYAN} NetSpy${NC}"
     echo -e "${CYAN} Target: $domain${NC}"
     echo -e "${CYAN} Output: $output${NC}"
     echo -e "${CYAN} Threads: ${threads:-config default}${NC}"
     echo -e "${CYAN}========================================${NC}"
     phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
-    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
+    _run_py "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
     if [ ! -f "$output/recon.json" ]; then
         phase_fail "recon phase produced no output"
         exit 1
@@ -219,19 +238,19 @@ cmd_audit() {
         echo "$domain" > "$targets"
     fi
     phase_info "2" "Port and service scanning"
-    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output" "${thread_args[@]}"
+    _run_py "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "scan data saved to $output/ports.json"
     phase_info "3" "Technology fingerprinting"
-    python3 "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
+    _run_py "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "fingerprint data saved to $output/tech.json"
     phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
-    python3 "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
+    _run_py "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "vulnerability data saved to $output/findings.json"
     phase_info "5" "Report generation"
-    python3 "$NETSPY_ROOT/lib/report.py" --input "$output" --config "$config" --output "$output"
-    phase_ok "report saved to $output/report.html"
+    _run_py "$NETSPY_ROOT/lib/report.py" --input "$output" --config "$config" --output "$output"
+    phase_ok "report saved to $output/report.txt"
     echo -e "\n${GREEN}[+] Audit complete.${NC}"
-    echo -e "  Report: ${CYAN}$output/report.html${NC}"
+    echo -e "  Report: ${CYAN}$output/report.txt${NC}"
     echo -e "  Data:  ${CYAN}$output/${NC}"
 }
 
@@ -247,7 +266,14 @@ cmd_recon() {
             --config) config="$2"; shift 2 ;;
             --output) output="$2"; shift 2 ;;
             --threads) threads="$2"; shift 2 ;;
-            *) if [ -z "$domain" ]; then domain="$1"; fi; shift ;;
+            *)
+                if [ -z "$domain" ]; then
+                    domain="$1"
+                elif [ -z "$threads" ]; then
+                    threads="$1"
+                fi
+                shift
+                ;;
         esac
     done
     if [ -z "$domain" ]; then
@@ -255,15 +281,93 @@ cmd_recon() {
         exit 1
     fi
     if [ -z "$output" ]; then
-        output="$NETSPY_ROOT/output/$domain"
+        local clean_domain
+        clean_domain="$(sanitize_domain "$domain")"
+        output="$NETSPY_ROOT/output/$clean_domain"
     fi
     mkdir -p "$output"
     local thread_args=()
     if [ -n "$threads" ]; then
         thread_args=(--threads "$threads")
     fi
-    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
+    _run_py "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "recon data saved to $output/recon.json"
+}
+
+sanitize_domain() {
+    local d="$1"
+    d="${d#*://}"
+    d="${d%%/*}"
+    d="${d%%:*}"
+    d="${d#www.}"
+    echo "$d"
+}
+
+cmd_scan_full() {
+    check_deps || exit 1
+    local domain=""
+    local config="$NETSPY_CONFIG"
+    local output=""
+    local threads=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --domain) domain="$2"; shift 2 ;;
+            --config) config="$2"; shift 2 ;;
+            --output) output="$2"; shift 2 ;;
+            --threads) threads="$2"; shift 2 ;;
+            *)
+                if [ -z "$domain" ]; then
+                    domain="$1"
+                elif [ -z "$threads" ]; then
+                    threads="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+    if [ -z "$domain" ]; then
+        phase_fail "--domain is required"
+        exit 1
+    fi
+    local clean_domain
+    clean_domain="$(sanitize_domain "$domain")"
+    if [ -z "$output" ]; then
+        output="$NETSPY_ROOT/output/$clean_domain"
+    fi
+    mkdir -p "$output"
+    local thread_args=()
+    if [ -n "$threads" ]; then
+        thread_args=(--threads "$threads")
+    fi
+    echo -e "${CYAN}========================================${NC}"
+    echo -e "${CYAN} NetSpy — Scan (no report)${NC}"
+    echo -e "${CYAN} Target: $domain${NC}"
+    echo -e "${CYAN} Output: $output${NC}"
+    echo -e "${CYAN}========================================${NC}"
+    phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
+    _run_py "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
+    if [ ! -f "$output/recon.json" ]; then
+        phase_fail "recon phase produced no output"
+        exit 1
+    fi
+    phase_ok "recon data saved to $output/recon.json"
+    local targets="$output/targets.txt"
+    if [ -f "$output/ips.txt" ]; then
+        cp "$output/ips.txt" "$targets"
+    else
+        echo "$domain" > "$targets"
+    fi
+    phase_info "2" "Port and service scanning"
+    _run_py "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output" "${thread_args[@]}"
+    phase_ok "scan data saved to $output/ports.json"
+    phase_info "3" "Technology fingerprinting"
+    _run_py "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
+    phase_ok "fingerprint data saved to $output/tech.json"
+    phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
+    _run_py "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
+    phase_ok "vulnerability data saved to $output/findings.json"
+    echo -e "\n${GREEN}[+] Scan complete.${NC}"
+    echo -e "  Data: ${CYAN}$output/${NC}"
 }
 
 cmd_scan() {
@@ -278,7 +382,14 @@ cmd_scan() {
             --config) config="$2"; shift 2 ;;
             --output) output="$2"; shift 2 ;;
             --threads) threads="$2"; shift 2 ;;
-            *) if [ -z "$targets" ]; then targets="$1"; fi; shift ;;
+            *)
+                if [ -z "$targets" ]; then
+                    targets="$1"
+                elif [ -z "$threads" ]; then
+                    threads="$1"
+                fi
+                shift
+                ;;
         esac
     done
     if [ -z "$targets" ]; then
@@ -294,144 +405,257 @@ cmd_scan() {
         thread_args=(--threads "$threads")
     fi
     echo "$targets" > "$output/targets.txt"
-    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output" "${thread_args[@]}"
+    _run_py "$NETSPY_ROOT/lib/scan.py" --targets "$output/targets.txt" --config "$config" --output "$output" "${thread_args[@]}"
     phase_ok "scan data saved to $output/ports.json"
-}
-
-cmd_scan_full() {
-    check_deps || exit 1
-    local domain="$1"
-    local threads="${2:-}"
-    local config="$NETSPY_CONFIG"
-    local output="$NETSPY_ROOT/output/$domain"
-    mkdir -p "$output"
-    local thread_args=()
-    if [ -n "$threads" ]; then
-        thread_args=(--threads "$threads")
-    fi
-    echo -e "${CYAN}========================================${NC}"
-    echo -e "${CYAN} NetSPy — Scan (no report)${NC}"
-    echo -e "${CYAN} Target: $domain${NC}"
-    echo -e "${CYAN} Output: $output${NC}"
-    echo -e "${CYAN}========================================${NC}"
-    phase_info "1" "Reconnaissance (domains, subdomains, DNS, WHOIS)"
-    python3 "$NETSPY_ROOT/lib/recon.py" --domain "$domain" --config "$config" --output "$output" "${thread_args[@]}"
-    if [ ! -f "$output/recon.json" ]; then
-        phase_fail "recon phase produced no output"
-        exit 1
-    fi
-    phase_ok "recon data saved to $output/recon.json"
-    local targets="$output/targets.txt"
-    if [ -f "$output/ips.txt" ]; then
-        cp "$output/ips.txt" "$targets"
-    else
-        echo "$domain" > "$targets"
-    fi
-    phase_info "2" "Port and service scanning"
-    python3 "$NETSPY_ROOT/lib/scan.py" --targets "$targets" --config "$config" --output "$output" "${thread_args[@]}"
-    phase_ok "scan data saved to $output/ports.json"
-    phase_info "3" "Technology fingerprinting"
-    python3 "$NETSPY_ROOT/lib/fingerprint.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
-    phase_ok "fingerprint data saved to $output/tech.json"
-    phase_info "4" "Vulnerability assessment (CVE matching + nuclei)"
-    python3 "$NETSPY_ROOT/lib/vuln.py" --input "$output" --config "$config" --output "$output" "${thread_args[@]}"
-    phase_ok "vulnerability data saved to $output/findings.json"
-    echo -e "\n${GREEN}[+] Scan complete.${NC}"
-    echo -e "  Data: ${CYAN}$output/${NC}"
 }
 
 cmd_report() {
-    local input="$1"
-    python3 "$NETSPY_ROOT/lib/report.py" --input "$input" --output "$input"
-    phase_ok "report saved to $input/report.html"
+    local input=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dir) input="$2"; shift 2 ;;
+            *) if [ -z "$input" ]; then input="$1"; fi; shift ;;
+        esac
+    done
+    if [ -z "$input" ]; then
+        phase_fail "--dir is required"
+        exit 1
+    fi
+    _run_py "$NETSPY_ROOT/lib/report.py" --input "$input" --output "$input"
+    phase_ok "report saved to $input/report.txt"
+}
+
+# stealth helpers
+stealth_opts=""
+stealth_desc=""
+stealth_choice=4
+original_mac=""
+spoofed_iface=""
+
+cleanup_stealth() {
+    if [ -n "$original_mac" ] && [ -n "$spoofed_iface" ]; then
+        echo -e "\n  ${YELLOW}[!]${NC} restoring MAC on $spoofed_iface"
+        sudo ip link set dev "$spoofed_iface" down 2>/dev/null && \
+        sudo ip link set dev "$spoofed_iface" address "$original_mac" 2>/dev/null && \
+        sudo ip link set dev "$spoofed_iface" up 2>/dev/null && \
+        echo -e "  ${GREEN}[ok]${NC} MAC restored" || \
+        echo -e "  ${YELLOW}[!]${NC} MAC restore failed"
+        original_mac=""
+        spoofed_iface=""
+    fi
+}
+
+cleanup_and_exit() {
+    cleanup_stealth
+    echo -e "\n${DIM}Bye.${NC}"
+    exit 0
+}
+
+_run_py() {
+    python3 "$@"
+    local rc=$?
+    if [ $rc -eq 130 ]; then
+        cleanup_and_exit
+    fi
+    return $rc
+}
+
+trap cleanup_and_exit INT TERM
+trap cleanup_stealth EXIT
+
+apply_stealth() {
+    local choice="$1"
+    stealth_opts=""
+    stealth_desc=""
+    case "$choice" in
+        1)
+            stealth_desc="MAC spoof + randomized delays + fake user-agent"
+            export NETSPY_STEALTH=1
+            ;;
+        2)
+            stealth_desc="Randomized delays + fake user-agent"
+            export NETSPY_STEALTH=2
+            ;;
+        3)
+            stealth_desc="MAC address spoof"
+            export NETSPY_STEALTH=0
+            ;;
+        *)
+            stealth_desc="none"
+            export NETSPY_STEALTH=0
+            ;;
+    esac
+}
+
+t_stealth_title() {
+    if [ "$LANG" = "es" ]; then
+        echo -e "\n  ${BOLD}Configuracion de sigilo${NC}"
+        echo -e "  ${DIM}Estas opciones ayudan a reducir tu huella durante el escaneo${NC}"
+    else
+        echo -e "\n  ${BOLD}Stealth configuration${NC}"
+        echo -e "  ${DIM}These options help reduce your footprint during scanning${NC}"
+    fi
+}
+
+t_stealth_item() {
+    echo -e "    ${YELLOW}$1${NC}) $2"
+}
+
+t_stealth_prompt() {
+    if [ "$LANG" = "es" ]; then
+        echo -ne "\n  ${BOLD}Opcion${NC} [1-4]: "
+    else
+        echo -ne "\n  ${BOLD}Choice${NC} [1-4]: "
+    fi
+}
+
+show_stealth_menu() {
+    t_stealth_title
+    if [ "$LANG" = "es" ]; then
+        t_stealth_item "1" "Alto: spoof MAC + delays aleatorios + user-agent falso"
+        t_stealth_item "2" "Medio: delays aleatorios + user-agent falso"
+        t_stealth_item "3" "Bajo: spoof MAC address"
+        t_stealth_item "4" "Ninguno (escaneo directo)"
+    else
+        t_stealth_item "1" "High: spoof MAC + random delays + fake user-agent"
+        t_stealth_item "2" "Medium: random delays + fake user-agent"
+        t_stealth_item "3" "Low: spoof MAC address"
+        t_stealth_item "4" "None (direct scan)"
+    fi
+    t_stealth_prompt
+    read -r stealth_choice || return 1
+    apply_stealth "$stealth_choice"
+}
+
+spoof_mac() {
+    local iface="${1:-$(ip route | grep default | awk '{print $5}' | head -1)}"
+    if [ -z "$iface" ]; then
+        echo -e "  ${YELLOW}[!]${NC} no network interface found, skipping MAC spoof"
+        return
+    fi
+    original_mac="$(cat /sys/class/net/$iface/address 2>/dev/null)"
+    if [ -z "$original_mac" ]; then
+        echo -e "  ${YELLOW}[!]${NC} cannot read MAC for $iface, skipping"
+        return
+    fi
+    spoofed_iface="$iface"
+    local new_mac="02:$(openssl rand -hex 5 | sed 's/\(..\)/\1:/g; s/.$//')"
+    echo -e "  ${YELLOW}[!]${NC} spoofing MAC on $iface: $original_mac -> $new_mac"
+    sudo ip link set dev "$iface" down 2>/dev/null && \
+    sudo ip link set dev "$iface" address "$new_mac" 2>/dev/null && \
+    sudo ip link set dev "$iface" up 2>/dev/null && \
+    echo -e "  ${GREEN}[ok]${NC} MAC changed" || \
+    echo -e "  ${YELLOW}[!]${NC} MAC spoof failed (need sudo)"
 }
 
 # interactive menu
 interactive_menu() {
-    # language selection
-    t_lang_prompt
-    read -r lang_choice
-    case "$lang_choice" in
-        2) LANG="es" ;;
-        *) LANG="en" ;;
-    esac
-    export NETSPY_LANG="$LANG"
-
     while true; do
-        clear
-        t_banner
-        t_menu_title
-        if [ "$LANG" = "es" ]; then
-            t_menu_item "1" "Auditar dominio (pipeline completo con reporte)"
-            t_menu_item "2" "Escanear dominio (recon + scan + fingerprint + CVEs)"
-            t_menu_item "3" "Reconocimiento (solo subdominios/DNS)"
-            t_menu_item "4" "Escaneo de puertos (IP/rango)"
-            t_menu_item "5" "Generar reporte (datos existentes)"
-            t_menu_item "6" "Instalar dependencias"
-            t_menu_item "q" "Salir"
-        else
-            t_menu_item "1" "Audit domain (full pipeline with report)"
-            t_menu_item "2" "Scan domain (recon + scan + fingerprint + CVEs)"
-            t_menu_item "3" "Reconnaissance (subdomains/DNS only)"
-            t_menu_item "4" "Port scan (IP/range)"
-            t_menu_item "5" "Generate report (existing data)"
-            t_menu_item "6" "Install dependencies"
-            t_menu_item "q" "Quit"
-        fi
-        t_prompt
-        read -r choice
-        case "$choice" in
-            1)
-                t_domain_prompt
-                read -r domain
-                t_threads_prompt
-                read -r threads
-                t_running
-                cmd_audit "$domain" "$threads"
-                ;;
-            2)
-                t_domain_prompt
-                read -r domain
-                t_threads_prompt
-                read -r threads
-                t_running
-                cmd_scan_full "$domain" "$threads"
-                ;;
-            3)
-                t_domain_prompt
-                read -r domain
-                t_threads_prompt
-                read -r threads
-                t_running
-                cmd_recon "$domain" "$threads"
-                ;;
-            4)
-                t_target_prompt
-                read -r target
-                t_threads_prompt
-                read -r threads
-                t_running
-                cmd_scan "$target" "$threads"
-                ;;
-            5)
-                t_dir_prompt
-                read -r dir
-                t_running
-                cmd_report "$dir"
-                ;;
-            6)
-                cmd_doctor
-                ;;
-            q|Q)
-                echo -e "\n${DIM}Bye.${NC}"
-                exit 0
-                ;;
-            *)
-                continue
-                ;;
+        stealth_choice=4
+        stealth_desc="none"
+        original_mac=""
+        spoofed_iface=""
+
+        t_lang_prompt
+        read -r lang_choice || exit 0
+        case "$lang_choice" in
+            2) LANG="es" ;;
+            *) LANG="en" ;;
         esac
-        t_back
-        read -r
+        export NETSPY_LANG="$LANG"
+
+        show_stealth_menu || exit 0
+
+        while true; do
+            clear
+            t_banner
+            t_menu_title
+            if [ "$LANG" = "es" ]; then
+                t_menu_item "1" "Escaneo completo + reporte"
+                t_menu_item "2" "Escaneo completo"
+                t_menu_item "3" "Reconocimiento (solo subdominios/DNS)"
+                t_menu_item "4" "Escaneo de puertos (IP/rango)"
+                t_menu_item "5" "Generar reporte (datos existentes)"
+                t_menu_item "6" "Instalar dependencias"
+                t_menu_item "7" "Ver licencia"
+                t_menu_item "q" "Salir"
+                echo -e "\n  ${DIM}Sigilo: $stealth_desc${NC}"
+            else
+                t_menu_item "1" "Audit domain (full pipeline with report)"
+                t_menu_item "2" "Scan domain (recon + scan + fingerprint + CVEs)"
+                t_menu_item "3" "Reconnaissance (subdomains/DNS only)"
+                t_menu_item "4" "Port scan (IP/range)"
+                t_menu_item "5" "Generate report (existing data)"
+                t_menu_item "6" "Install dependencies"
+                t_menu_item "7" "View license"
+                t_menu_item "q" "Quit"
+                echo -e "\n  ${DIM}Stealth: $stealth_desc${NC}"
+            fi
+            t_prompt
+            read -r choice || exit 0
+            case "$choice" in
+                1|2|3|4|5)
+                    case "$stealth_choice" in
+                        1|3) spoof_mac || true ;;
+                    esac
+                    ;;
+            esac
+            case "$choice" in
+                1)
+                    t_domain_prompt
+                    read -r domain || exit 0
+                    t_threads_prompt
+                    read -r threads || exit 0
+                    t_running
+                    cmd_audit "$domain" "$threads"
+                    ;;
+                2)
+                    t_domain_prompt
+                    read -r domain || exit 0
+                    t_threads_prompt
+                    read -r threads || exit 0
+                    t_running
+                    cmd_scan_full "$domain" "$threads"
+                    ;;
+                3)
+                    t_domain_prompt
+                    read -r domain || exit 0
+                    t_threads_prompt
+                    read -r threads || exit 0
+                    t_running
+                    cmd_recon "$domain" "$threads"
+                    ;;
+                4)
+                    t_target_prompt
+                    read -r target || exit 0
+                    t_threads_prompt
+                    read -r threads || exit 0
+                    t_running
+                    cmd_scan "$target" "$threads"
+                    ;;
+                5)
+                    t_dir_prompt
+                    read -r dir || exit 0
+                    t_running
+                    cmd_report "$dir"
+                    ;;
+                6)
+                    cmd_doctor
+                    ;;
+                7)
+                    cat "$NETSPY_ROOT/LICENSE" 2>/dev/null || echo "License file not found."
+                    ;;
+                q|Q)
+                    echo -e "\n${DIM}Bye.${NC}"
+                    exit 0
+                    ;;
+                *)
+                    continue
+                    ;;
+            esac
+            t_back
+            read -r
+        done
     done
 }
 
@@ -444,9 +668,12 @@ if [ $# -gt 0 ]; then
         portscan) shift; cmd_scan "$@" ;;
         report) shift; cmd_report "$@" ;;
         doctor) cmd_doctor ;;
+        license)
+            cat "$NETSPY_ROOT/LICENSE" 2>/dev/null || echo "License file not found."
+            ;;
         help|--help|-h)
             cat <<EOF
-NetSPy — Network surveillance pipeline
+NetSpy — Network surveillance pipeline
 
 Usage:
   netspy audit   --domain <domain>    Run full pipeline (phases 1-5)
@@ -456,6 +683,7 @@ Usage:
   netspy report  --dir <output_dir>   Generate report from existing output
   netspy doctor                       Check and install dependencies
   netspy help                         Show this help
+  netspy license                      Show license and disclaimer
 
 Options:
   --domain       Target domain (ej: example.com)

@@ -1,11 +1,11 @@
-# NetSPy
+# NetSpy
 
 Network surveillance pipeline for reconnaissance and vulnerability assessment. Feed it a domain and get structured data about subdomains, open ports, technologies, and CVEs.
 
 ## Pipeline
 
 ```
-Recon  ->  Port Scan  ->  Fingerprint  ->  CVE Matching  ->  HTML Report
+Recon  ->  Port Scan  ->  Fingerprint  ->  CVE Matching  ->  TXT Report
 (1)        (2)           (3)             (4 + nuclei)       (5)
 ```
 
@@ -13,7 +13,7 @@ Recon  ->  Port Scan  ->  Fingerprint  ->  CVE Matching  ->  HTML Report
 - Phase 2: Port scan with nmap, service version detection
 - Phase 3: HTTP probing (httpx), technology detection (whatweb), version extraction
 - Phase 4: CVE matching via NVD API, nuclei template scanning, SSL audit
-- Phase 5: Consolidated HTML report with severity cards
+- Phase 5: Consolidated TXT report with severity breakdown
 
 ## Quick start
 
@@ -26,7 +26,7 @@ netspy audit --domain example.com
 
 # Individual phases
 netspy recon --domain example.com
-netspy scan --target 192.168.1.0/24
+netspy portscan --target 192.168.1.0/24
 netspy report --dir output/example.com
 
 # Override thread count
@@ -36,7 +36,7 @@ netspy recon --domain example.com --threads 50
 ## Requirements
 
 - Python 3.10+
-- nmap, whois, whatweb, jq, curl, openssl
+- nmap, whois, whatweb, openssl
 - httpx (projectdiscovery), nuclei (optional)
 
 ## Configuration
@@ -59,7 +59,7 @@ output/<domain>/
 ├── urls.txt             # Web URLs for scanning
 ├── tech.json            # Phase 3: technologies, versions, headers
 ├── findings.json        # Phase 4: CVEs, nuclei results, misconfigs
-└── report.html          # Phase 5: consolidated HTML report
+└── report.txt           # Phase 5: consolidated text report
 ```
 
 ## CVE matching
@@ -68,4 +68,4 @@ Each detected product:version is queried against the NVD API. Results include CV
 
 ## License
 
-MIT
+See [LICENSE](LICENSE) — Educational & Ethical Use Only

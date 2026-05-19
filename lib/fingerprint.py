@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
-"""
-Phase 3: Technology Fingerprinting
-- HTTP probing with httpx
-- Technology detection with whatweb
-- WAF detection
-- Version extraction from headers, body, certs
-- Output: JSON with detected technologies and versions
-"""
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from typing import Any
 
-from common import load_config, apply_thread_override
+from common import load_config, apply_thread_override, t
 
 BOLD = "\033[1m"
 CYAN = "\033[0;36m"
@@ -26,21 +19,23 @@ DIM = "\033[2m"
 NC = "\033[0m"
 
 
+def _normalize_product(name: str) -> str:
+    name = name.strip()
+    name = re.sub(r"[^a-zA-Z0-9\s._-]+$", "", name).strip()
+    name = re.sub(r"\s+", " ", name)
+    return name
+
+
 def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
-    """
-    Use httpx to probe URLs and extract:
-    - status code, title, web server, content-type
-    - content-length, technologies, response headers
-    """
     if not urls:
         return []
 
     input_file = f"/tmp/netspy_httpx_input_{int(time.time())}.txt"
     output_file = f"/tmp/netspy_httpx_out_{int(time.time())}.json"
 
-    with open(input_file, "w") as f:
+    with open(input_file, "w") as url_file:
         for url in urls:
-            f.write(url + "\n")
+            url_file.write(url + "\n")
 
     cmd = [
         "httpx",
@@ -58,18 +53,55 @@ def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
         "-o", output_file,
     ]
 
+    total = len(urls)
+    bar_len = 30
+
+    proc = None
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        checked = 0
+        deadline = time.time() + 180
+        last_check = 0
+
+        while time.time() < deadline:
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    break
+                elapsed = time.time() - last_check if last_check > 0 else 0
+                if elapsed > 5:
+                    last_check = time.time()
+                    pct = int((checked / total) * 100) if total > 0 else 0
+                    filled = int(bar_len * pct // 100)
+                    bar = "#" * filled + "-" * (bar_len - filled)
+                    print(f"\r  [{bar}] {pct}% ({checked}/{total})", end="", flush=True)
+                time.sleep(0.2)
+                continue
+            checked += 1
+            last_check = time.time()
+            pct = int((checked / total) * 100) if total > 0 else 0
+            filled = int(bar_len * checked // total) if total > 0 else 0
+            bar = "#" * filled + "-" * (bar_len - filled)
+            print(f"\r  [{bar}] {pct}% ({checked}/{total})", end="", flush=True)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+            print(f"\n  [!] httpx timeout (180s), {checked}/{total} completed")
     except FileNotFoundError:
-        print("  [!] httpx not found. install: go install github.com/projectdiscovery/httpx/cmd/httpx@latest")
+        print(f"  {t('httpx_not_found')}")
         return []
     except Exception:
+        if proc and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         return []
+    finally:
+        print()
 
     results = []
     if os.path.exists(output_file):
-        with open(output_file) as f:
-            for line in f:
+        with open(output_file) as json_file:
+            for line in json_file:
                 line = line.strip()
                 if line:
                     try:
@@ -77,9 +109,9 @@ def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
                     except json.JSONDecodeError:
                         pass
 
-    for tmp in [input_file, output_file]:
+    for tmp_file in [input_file, output_file]:
         try:
-            os.remove(tmp)
+            os.remove(tmp_file)
         except Exception:
             pass
 
@@ -87,102 +119,146 @@ def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
 
 
 def run_whatweb(urls: list[str]) -> list[dict[str, Any]]:
-    """
-    Use whatweb for deep technology fingerprinting.
-    Detects CMSes, JS frameworks, analytics, etc.
-    """
     if not urls:
         return []
 
     results = []
-    for url in urls[:20]:  # limit to 20 to avoid huge runtime
-        cmd = ["whatweb", "-a", "3", "--no-errors", "--color=never", url]
+    scan_urls = urls[:20]
+    total = len(scan_urls)
+    bar_len = 30
+
+    for idx, url in enumerate(scan_urls, 1):
+        pct = int((idx / total) * 100) if total > 0 else 0
+        filled = int(bar_len * idx // total) if total > 0 else 0
+        bar = "#" * filled + "-" * (bar_len - filled)
+        print(f"\r  [{bar}] {pct}% ({idx}/{total})", end="", flush=True)
+
+        cmd = ["whatweb", "-a", "1", "--no-errors", "--color=never", "--connect-timeout", "10", url]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.stdout.strip():
                 results.append({"url": url, "raw": result.stdout.strip()})
         except Exception:
             pass
 
+    print()
     return results
 
 
-def extract_versions(results: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """
-    Extract product + version pairs from httpx results.
-    Aggregates from server header, tech-detect, and response headers.
-    """
+def extract_versions(httpx_results: list[dict[str, Any]]) -> list[dict[str, str]]:
     versions: list[dict[str, str]] = []
+    version_re = re.compile(r"\d+\.\d+(\.\d+)*")
 
-    for r in results:
-        # From web_server field
-        server = r.get("webserver", "")
+    for httpx_entry in httpx_results:
+        server = httpx_entry.get("webserver", "")
         if server:
-            # "Apache/2.4.49 (Ubuntu)" -> ("Apache", "2.4.49")
             parts = server.split("/", 1)
             if len(parts) == 2:
-                product = parts[0].strip()
+                product = _normalize_product(parts[0])
                 ver_part = parts[1].split()[0].strip()
+                if version_re.match(ver_part):
+                    versions.append({
+                        "source": httpx_entry.get("url", ""),
+                        "product": product,
+                        "version": ver_part,
+                        "from": "server-header",
+                    })
+            elif version_re.match(server):
                 versions.append({
-                    "source": r.get("url", ""),
-                    "product": product,
-                    "version": ver_part,
+                    "source": httpx_entry.get("url", ""),
+                    "product": "unknown",
+                    "version": server,
                     "from": "server-header",
                 })
 
-        # From tech-detect (httpx --tech-detect)
-        tech = r.get("tech", [])
+        tech = httpx_entry.get("tech", [])
         if isinstance(tech, list):
-            for t in tech:
-                if ":" in t:
-                    product, ver = t.split(":", 1)
-                    versions.append({
-                        "source": r.get("url", ""),
-                        "product": product.strip(),
-                        "version": ver.strip(),
-                        "from": "tech-detect",
-                    })
+            for tech_item in tech:
+                if ":" in tech_item:
+                    product, ver = tech_item.split(":", 1)
+                    ver = ver.strip()
+                    if version_re.match(ver):
+                        versions.append({
+                            "source": httpx_entry.get("url", ""),
+                            "product": _normalize_product(product),
+                            "version": ver,
+                            "from": "tech-detect",
+                        })
 
-        # From response headers (httpx uses "header" field)
-        headers = r.get("header", {}) or r.get("response_header", {})
+        headers = httpx_entry.get("header", {}) or httpx_entry.get("response_header", {})
         if isinstance(headers, dict):
             for hdr, val in headers.items():
                 val_str = str(val)
-                # X-Powered-By: PHP/7.4.33
-                # X-AspNet-Version: 4.0.30319
-                # x-generator: Drupal 9 (https://www.drupal.org)
-                if "/" in val_str and any(c.isdigit() for c in val_str.split("/")[1][:10]):
-                    product = val_str.split("/")[0].strip()
-                    ver = val_str.split("/")[1].strip().split()[0]
-                    if len(product) < 30 and len(ver) < 20:
+                hdr_lower = hdr.lower()
+                if hdr_lower not in ("x-powered-by", "x-aspnet-version", "x-generator",
+                                      "x-runtime", "x-version", "server", "x-drupal-cache",
+                                      "x-wordpress-cache", "x-joomla-version"):
+                    continue
+                if "/" in val_str:
+                    parts = val_str.split("/", 1)
+                    product = _normalize_product(parts[0])
+                    ver = parts[1].strip().split()[0]
+                    if version_re.match(ver) and len(product) < 30 and len(ver) < 20:
                         versions.append({
-                            "source": r.get("url", ""),
+                            "source": httpx_entry.get("url", ""),
                             "product": product,
                             "version": ver,
-                            "from": f"header-{hdr.lower()}",
+                            "from": f"header-{hdr_lower}",
+                        })
+                elif version_re.search(val_str):
+                    match = version_re.search(val_str)
+                    ver = match.group(0)
+                    product = _normalize_product(val_str[:match.start()].rstrip(" /"))
+                    if product and len(product) < 30 and len(ver) < 20:
+                        versions.append({
+                            "source": httpx_entry.get("url", ""),
+                            "product": product,
+                            "version": ver,
+                            "from": f"header-{hdr_lower}",
                         })
 
     return versions
 
 
+def extract_versions_from_whatweb(ww_results: list[dict[str, Any]]) -> list[dict[str, str]]:
+    versions: list[dict[str, str]] = []
+    ww_re = re.compile(r"([A-Za-z][A-Za-z0-9 _./-]*?)\[(\d+\.\d+(\.\d+)*)\]")
+    skip_products = {"ip", "html5", "html", "xhtml", "css", "javascript", "httpserver"}
+
+    for ww_entry in ww_results:
+        raw = ww_entry.get("raw", "")
+        url = ww_entry.get("url", "")
+        for match in ww_re.finditer(raw):
+            product = _normalize_product(match.group(1))
+            version = match.group(2).strip()
+            if product.lower() in skip_products:
+                continue
+            if product and len(product) < 40:
+                versions.append({
+                    "source": url,
+                    "product": product,
+                    "version": version,
+                    "from": "whatweb",
+                })
+
+    return versions
+
+
 def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]:
-    """Execute fingerprinting phase."""
     urls_path = os.path.join(input_dir, "urls.txt")
     ports_path = os.path.join(input_dir, "ports.json")
     recon_path = os.path.join(input_dir, "recon.json")
 
-    # Collect URLs to probe
     urls: list[str] = []
 
-    # From ports.json (open ports with http/https)
     if os.path.exists(urls_path):
-        with open(urls_path) as f:
-            urls = [line.strip() for line in f if line.strip()]
+        with open(urls_path) as url_file:
+            urls = [line.strip() for line in url_file if line.strip()]
 
     if os.path.exists(ports_path):
-        with open(ports_path) as f:
+        with open(ports_path) as ports_file:
             try:
-                ports_data = json.load(f)
+                ports_data = json.load(ports_file)
                 for svc in ports_data.get("services", []):
                     if svc.get("service") in ("http", "https", "ssl|http"):
                         proto = "https" if svc["port"] in (443, 8443) else "http"
@@ -192,82 +268,74 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
             except Exception:
                 pass
 
-    # From recon.json (all resolved subdomains)
     if os.path.exists(recon_path):
-        with open(recon_path) as f:
+        with open(recon_path) as recon_file:
             try:
-                recon_data = json.load(f)
-                domain = recon_data.get("domain", "")
+                recon_data = json.load(recon_file)
                 for sub in recon_data.get("resolved", {}):
                     urls.append(f"http://{sub}/")
                     urls.append(f"https://{sub}/")
             except Exception:
                 pass
 
-    # Deduplicate
     seen: set[str] = set()
     unique_urls: list[str] = []
-    for u in urls:
-        if u not in seen:
-            seen.add(u)
-            unique_urls.append(u)
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            unique_urls.append(url)
     urls = unique_urls
 
     if not urls:
-        print("  [!] no URLs to fingerprint")
+        print(f"  {t('no_urls_fingerprint')}")
         return {"error": "no urls", "technologies": [], "versions": []}
 
-    print(f"  URLs to probe:     {len(urls)}")
+    print(f"  {t('urls_to_probe')}: {len(urls)}")
     print()
 
-    # httpx probe
     threads = config.get("target", {}).get("threads", 20)
-    print("  httpx probing...", end=" ", flush=True)
+    print(f"  {t('httpx_probing')}...", end=" ", flush=True)
     httpx_results = run_httpx(urls, threads)
-    print(f"{len(httpx_results)} alive")
+    print(f"{len(httpx_results)} {t('alive')}")
 
-    # whatweb (limit to 10 to avoid OOM)
     ww_limit = config.get("fingerprint", {}).get("whatweb_limit", 10)
     ww_actual = min(len(urls), ww_limit)
-    print(f"  whatweb deep scan ({ww_actual}/{len(urls)})...", end=" ", flush=True)
+    print(f"  {t('whatweb_deep_scan')} ({ww_actual}/{len(urls)})...", end=" ", flush=True)
     whatweb_results = run_whatweb(urls[:ww_actual])
-    print(f"{len(whatweb_results)} scanned")
+    print(f"{len(whatweb_results)} {t('scanned')}")
 
-    # Extract versions
     versions = extract_versions(httpx_results)
+    versions += extract_versions_from_whatweb(whatweb_results)
 
-    # Build technology list
     technologies: list[dict[str, Any]] = []
     seen_tech: set[str] = set()
 
-    for r in httpx_results:
-        tech_list = r.get("tech", [])
+    for httpx_entry in httpx_results:
+        tech_list = httpx_entry.get("tech", [])
         if isinstance(tech_list, list):
-            for t in tech_list:
-                t_name = t.split(":")[0] if ":" in t else t
-                if t_name not in seen_tech:
-                    seen_tech.add(t_name)
+            for tech_entry in tech_list:
+                tech_name = tech_entry.split(":")[0] if ":" in tech_entry else tech_entry
+                if tech_name not in seen_tech:
+                    seen_tech.add(tech_name)
                     technologies.append({
-                        "name": t_name,
-                        "version": t.split(":")[1] if ":" in t else "",
-                        "source": r.get("url", ""),
+                        "name": tech_name,
+                        "version": tech_entry.split(":")[1] if ":" in tech_entry else "",
+                        "source": httpx_entry.get("url", ""),
                     })
                 else:
-                    # Update existing with version if missing
                     for existing in technologies:
-                        if existing["name"] == t_name and not existing["version"]:
-                            existing["version"] = t.split(":")[1] if ":" in t else ""
+                        if existing["name"] == tech_name and not existing["version"]:
+                            existing["version"] = tech_entry.split(":")[1] if ":" in tech_entry else ""
 
-    # Summarize alive hosts
     alive = []
-    for r in httpx_results:
+    for httpx_entry in httpx_results:
         alive.append({
-            "url": r.get("url", ""),
-            "status": r.get("status_code", 0),
-            "title": r.get("title", ""),
-            "server": r.get("webserver", ""),
-            "content_length": r.get("content_length", 0),
-            "content_type": r.get("content_type", ""),
+            "url": httpx_entry.get("url", ""),
+            "status": httpx_entry.get("status_code", 0),
+            "title": httpx_entry.get("title", ""),
+            "server": httpx_entry.get("webserver", ""),
+            "content_length": httpx_entry.get("content_length", 0),
+            "content_type": httpx_entry.get("content_type", ""),
         })
 
     result: dict[str, Any] = {
@@ -280,36 +348,34 @@ def run_fingerprint(input_dir: str, config: dict, output: str) -> dict[str, Any]
         "whatweb": whatweb_results,
     }
 
-    # Save
     tech_path = os.path.join(output, "tech.json")
-    with open(tech_path, "w") as f:
-        json.dump(result, f, indent=2, default=str)
+    with open(tech_path, "w") as tech_file:
+        json.dump(result, tech_file, indent=2, default=str)
 
-    # Print summary
     print()
     if technologies:
-        print(f"  {BOLD}Technologies found{NC}")
+        print(f"\n  {BOLD}{t('tech_found')}{NC}")
         print(f"  {BOLD}{'─' * 40}{NC}")
-        seen: set[str] = set()
-        for t in technologies:
-            key = f"{t['name']}|{t['version']}"
-            if key in seen:
+        seen_names: set[str] = set()
+        for tech_entry in technologies:
+            key = f"{tech_entry['name']}|{tech_entry['version']}"
+            if key in seen_names:
                 continue
-            seen.add(key)
-            ver_str = f" {t['version']}" if t['version'] else ""
-            print(f"  {YELLOW}{t['name']}{NC}{ver_str} {DIM}({t['source']}){NC}")
+            seen_names.add(key)
+            ver_str = f" {tech_entry['version']}" if tech_entry['version'] else ""
+            print(f"  {YELLOW}{tech_entry['name']}{NC}{ver_str} {DIM}({tech_entry['source']}){NC}")
     if versions:
-        print(f"\n  {BOLD}Version strings ({len(versions)}){NC}")
+        print(f"\n  {BOLD}{t('version_strings')} ({len(versions)}){NC}")
         print(f"  {BOLD}{'─' * 40}{NC}")
-        seen_v: set[str] = set()
-        for v in versions:
-            key = f"{v['product']}|{v['version']}"
-            if key in seen_v:
+        seen_versions: set[str] = set()
+        for version_entry in versions:
+            key = f"{version_entry['product']}|{version_entry['version']}"
+            if key in seen_versions:
                 continue
-            seen_v.add(key)
-            print(f"  {GREEN}{v['product']}{NC} {v['version']} {DIM}(from {v['source']}){NC}")
+            seen_versions.add(key)
+            print(f"  {GREEN}{version_entry['product']}{NC} {version_entry['version']} {DIM}(from {version_entry['source']}){NC}")
 
-    print(f"\n  output: {tech_path}")
+    print(f"\n  {t('output')}: {tech_path}")
     return result
 
 
@@ -325,7 +391,11 @@ def main() -> None:
     config = apply_thread_override(config, args.threads)
     os.makedirs(args.output, exist_ok=True)
 
-    run_fingerprint(args.input, config, args.output)
+    try:
+        run_fingerprint(args.input, config, args.output)
+    except KeyboardInterrupt:
+        print("\n  [!] interrupted")
+        sys.exit(130)
 
 
 if __name__ == "__main__":

@@ -1,31 +1,52 @@
 #!/usr/bin/env python3
-"""
-Phase 2: Port and Service Scanning
-- Custom TCP connect scanner (fast, no root needed)
-- Nmap service version detection on found ports only
-- Output: JSON with ports, services, versions
-"""
-
 import argparse
 import json
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from common import load_config, apply_thread_override
+from common import load_config, apply_thread_override, t
 
 BOLD = "\033[1m"
 CYAN = "\033[0;36m"
 GREEN = "\033[0;32m"
 NC = "\033[0m"
+BAR_LEN = 30
+
+
+def _run_progress_bar(label: str, total_steps: int):
+    stop_event = threading.Event()
+
+    def _animate():
+        step = 0
+        max_steps = total_steps * 10
+        while not stop_event.is_set() and step < max_steps:
+            time.sleep(0.15)
+            step += 1
+            pct = min(int((step / max_steps) * 100), 99)
+            filled = int(BAR_LEN * pct // 100)
+            bar = "#" * filled + "-" * (BAR_LEN - filled)
+            print(f"\r  [{bar}] {pct}% {label}", end="", flush=True)
+
+    anim = threading.Thread(target=_animate, daemon=True)
+    anim.start()
+    return anim, stop_event
+
+
+def _finish_progress_bar(anim, stop_event, label: str):
+    stop_event.set()
+    anim.join(timeout=1)
+    filled = BAR_LEN
+    bar = "#" * filled
+    print(f"\r  [{bar}] 100% {label}", flush=True)
 
 
 def load_targets(targets_path: str) -> list[str]:
-    """Load target IPs from file. Resolves domains if needed."""
     if not os.path.exists(targets_path):
         print(f"  [!] target file not found: {targets_path}")
         return []
@@ -72,7 +93,7 @@ TOP_PORTS = [
     12000, 12345, 12346, 12443, 14000, 16080, 16110, 16992, 16993,
     17017, 18080, 18081, 18090, 18101, 18200, 18201, 19000, 20000,
     20001, 20720, 21000, 21306, 22222, 23000, 23101, 24000, 24444,
-    25000, 25565, 26000, 26208, 27000, 27017, 27374, 27017, 28017,
+    25000, 25565, 26000, 26208, 27000, 27017, 27374, 28017,
     28080, 30000, 30704, 31138, 31337, 31339, 32764, 32768, 32769,
     32770, 32771, 32772, 32773, 32774, 32775, 32776, 32777, 32778,
     32779, 32780, 32781, 32782, 32783, 32784, 32785, 33354, 33890,
@@ -89,7 +110,6 @@ TOP_PORTS = [
 
 
 def tcp_scan_port(ip: str, port: int, timeout: float = 2.0) -> int | None:
-    """Try TCP connect to a port. Returns port if open, None if closed."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
@@ -106,12 +126,6 @@ def custom_port_scan(
     threads: int = 50,
     timeout: float = 1.0,
 ) -> dict[str, list[int]]:
-    """
-    Custom TCP connect port scanner.
-    Scans IP-by-IP so a slow/dead host doesn't block others.
-    Each IP's ports are scanned concurrently with thread pool.
-    Returns dict of ip -> [open ports].
-    """
     if ports is None:
         ports = TOP_PORTS
 
@@ -151,54 +165,56 @@ def run_nmap_version_scan(
     ip_ports: dict[str, list[int]],
     timeout: int = 300,
 ) -> dict[str, Any]:
-    """
-    Run nmap only on the specific (ip, port) pairs found open.
-    Uses -sV for version detection, connects only to the ports we found.
-    """
-    # Build nmap target expressions like: 1.2.3.4 -p 80,443,8080
-    nmap_targets = []
-    for ip, ports in ip_ports.items():
-        if ports:
-            port_list = ",".join(str(p) for p in ports)
-            nmap_targets.append(f"{ip} -p {port_list}")
-
-    if not nmap_targets:
+    if not ip_ports:
         return {"hosts": [], "total_open_ports": 0, "services": []}
 
     output_file = f"/tmp/netspy_nmap_{int(time.time())}.xml"
+    host_list = list(ip_ports.items())
+    total_hosts = len(host_list)
 
-    # nmap needs targets as separate arguments, not combined strings
-    nmap_cmd = [
-        "nmap",
-        "-sT",
-        "-sV",
-        "-T4",
-        "--max-retries", "2",
-        "-oX", output_file,
-    ]
+    anim_thread, stop_event = _run_progress_bar("nmap version detection", total_hosts)
 
-    # Add each target separately
-    for ip, ports in ip_ports.items():
-        if ports:
-            port_list = ",".join(str(p) for p in sorted(ports))
-            nmap_cmd.append(ip)
-            nmap_cmd.append("-p")
-            nmap_cmd.append(port_list)
+    for hidx, (ip, ports) in enumerate(host_list, 1):
+        port_list = ",".join(str(p) for p in sorted(ports))
+        nmap_cmd = [
+            "nmap",
+            "-Pn",
+            "-sT",
+            "-sV",
+            "-T4",
+            "--max-retries", "2",
+            "--host-timeout", "30s",
+            "-p", port_list,
+            "-oX", f"{output_file}.{hidx}",
+            ip,
+        ]
 
-    print(f"  nmap version detection on {sum(len(v) for v in ip_ports.values())} ports...")
+        try:
+            nmap_proc = subprocess.Popen(nmap_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            nmap_proc.wait(timeout=120)
+        except Exception:
+            try:
+                nmap_proc.kill()
+                nmap_proc.wait()
+            except Exception:
+                pass
 
-    try:
-        subprocess.run(nmap_cmd, capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError:
-        print("  [!] nmap not found. install with: sudo apt install nmap")
-        print("  [!] returning port scan results without versions")
-        return None
-    except Exception as e:
-        print(f"  [!] nmap error: {e}")
-        return None
+    _finish_progress_bar(anim_thread, stop_event, "nmap version detection")
 
-    if not os.path.exists(output_file):
-        return None
+    # Merge all XML outputs
+    all_xml = ""
+    for bidx in range(1, total_hosts + 1):
+        xml_path = f"{output_file}.{bidx}"
+        if os.path.exists(xml_path):
+            with open(xml_path) as f:
+                all_xml += f.read()
+            os.remove(xml_path)
+
+    if not all_xml:
+        return {"hosts": [], "total_open_ports": 0, "services": []}
+
+    with open(output_file, "w") as f:
+        f.write(all_xml)
 
     results = parse_nmap_xml(output_file)
     os.remove(output_file)
@@ -206,7 +222,6 @@ def run_nmap_version_scan(
 
 
 def parse_nmap_xml(xml_path: str) -> dict[str, Any]:
-    """Parse nmap XML output into structured JSON."""
     import xml.etree.ElementTree as ET
 
     results: dict[str, Any] = {
@@ -293,23 +308,30 @@ def run_nmap_direct_scan(
     top_n: int = 1000,
     timeout: int = 600,
 ) -> dict[str, Any] | None:
-    """Run nmap with -sV and --top-ports against all IPs in one go."""
     output_file = f"/tmp/netspy_nmap_{int(time.time())}.xml"
     nmap_cmd = [
-        "nmap", "-sT", "-sV", "-T4",
+        "nmap", "-Pn", "-sT", "-sV", "-T4",
         "--top-ports", str(top_n),
         "--max-retries", "2",
         "-oX", output_file,
     ] + ips
 
-    print(f"  nmap -sV --top-ports {top_n} on {len(ips)} IPs...")
+    nmap_proc = subprocess.Popen(nmap_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    anim_thread, stop_event = _run_progress_bar(f"nmap -sV --top-ports {top_n}", 1)
+
     try:
-        subprocess.run(nmap_cmd, capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError:
-        print("  [!] nmap not found")
-        return None
-    except Exception as e:
-        print(f"  [!] nmap error: {e}")
+        nmap_proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        nmap_proc.kill()
+        nmap_proc.wait()
+    except KeyboardInterrupt:
+        nmap_proc.kill()
+        nmap_proc.wait()
+        raise
+    finally:
+        _finish_progress_bar(anim_thread, stop_event, "nmap scan")
+
+    if nmap_proc.returncode != 0 and not os.path.exists(output_file):
         return None
 
     if not os.path.exists(output_file):
@@ -321,11 +343,6 @@ def run_nmap_direct_scan(
 
 
 def run_scan(targets_path: str, config: dict, output: str) -> dict[str, Any]:
-    """Execute port scanning phase.
-
-    Default: nmap -sV --top-ports on all targets (fast, accurate).
-    Custom scanner: TCP connect + nmap -sV on found ports (opt-in via config).
-    """
     ips = load_targets(targets_path)
     if not ips:
         print("  [!] no targets to scan")
@@ -334,25 +351,21 @@ def run_scan(targets_path: str, config: dict, output: str) -> dict[str, Any]:
     top_n = config.get("scan", {}).get("ports", {}).get("top", 1000)
     use_custom = config.get("scan", {}).get("use_custom_scanner", False)
 
-    print(f"  targets: {len(ips)} IPs")
+    print(f"  {t('targets')}: {len(ips)} IPs")
 
     if use_custom:
-        # Phase A: custom TCP connect (no root needed)
-        print("  [custom scan] TCP connect port scan...")
+        print(f"  [{t('custom_scan')}]...")
         ports = TOP_PORTS[:top_n] if top_n < len(TOP_PORTS) else TOP_PORTS
         threads = config.get("target", {}).get("threads", 50)
         open_ports = custom_port_scan(ips, ports, threads=threads, timeout=1.0)
         ip_ports = {ip: pts for ip, pts in open_ports.items() if pts}
         print(f"  hosts with open ports: {len(ip_ports)}")
         print()
-
-        # Phase B: nmap -sV only on found ports
-        print("  [nmap] service version detection on found ports...")
+        print(f"  [{t('nmap_version')}]...")
         nmap_results = run_nmap_version_scan(ip_ports)
         scan_method = "custom+nmap"
     else:
-        # Direct nmap scan with version detection
-        print("  [nmap] full port and service scan...")
+        print(f"  [{t('nmap_scan')}]...")
         nmap_results = run_nmap_direct_scan(ips, top_n)
         scan_method = "nmap-direct"
 
@@ -364,39 +377,39 @@ def run_scan(targets_path: str, config: dict, output: str) -> dict[str, Any]:
 
     # Save
     scan_path = os.path.join(output, "ports.json")
-    with open(scan_path, "w") as f:
-        json.dump(results, f, indent=2, default=str)
+    with open(scan_path, "w") as scan_file:
+        json.dump(results, scan_file, indent=2, default=str)
 
     # Generate aux files
     services = results.get("services", [])
-    unique_services = len(set(s["service"] for s in services if s.get("service")))
-    print(f"  {BOLD}Services detected: {unique_services}{NC}")
+    unique_services = len(set(svc["service"] for svc in services if svc.get("service")))
+    print(f"  {BOLD}{t('services_detected')}: {unique_services}{NC}")
     if services:
         print(f"  {BOLD}{'─' * 50}{NC}")
-        for s in services:
-            proto = s.get("service", "?")
-            port = s["port"]
-            ip = s["ip"]
-            product = s.get("product", "")
-            version = s.get("version", "")
+        for svc in services:
+            proto = svc.get("service", "?")
+            port = svc["port"]
+            ip = svc["ip"]
+            product = svc.get("product", "")
+            version = svc.get("version", "")
             ver_str = f" {product} {version}" if product else ""
             print(f"  {GREEN}{ip}{NC}:{port}/{proto}{ver_str}")
 
     svc_path = os.path.join(output, "services.txt")
-    with open(svc_path, "w") as f:
-        for s in services:
-            line = f"{s['ip']}:{s['port']} {s['service']}"
-            if s.get("product"):
-                line += f" ({s['product']} {s.get('version', '')})"
-            f.write(line + "\n")
+    with open(svc_path, "w") as svc_file:
+        for svc in services:
+            line = f"{svc['ip']}:{svc['port']} {svc['service']}"
+            if svc.get("product"):
+                line += f" ({svc['product']} {svc.get('version', '')})"
+            svc_file.write(line + "\n")
 
     url_path = os.path.join(output, "urls.txt")
-    with open(url_path, "w") as f:
-        for s in services:
-            svc = s.get("service", "")
-            if svc in ("http", "https", "http-proxy", "ssl|http"):
-                proto = "https" if s["port"] in (443, 8443) or svc == "https" else "http"
-                f.write(f"{proto}://{s['ip']}:{s['port']}/\n")
+    with open(url_path, "w") as url_file:
+        for svc in services:
+            svc_name = svc.get("service", "")
+            if svc_name in ("http", "https", "http-proxy", "ssl|http"):
+                proto = "https" if svc["port"] in (443, 8443) or svc_name == "https" else "http"
+                url_file.write(f"{proto}://{svc['ip']}:{svc['port']}/\n")
 
     print(f"\n  output: {scan_path}")
     return results
@@ -414,7 +427,11 @@ def main() -> None:
     config = apply_thread_override(config, args.threads)
     os.makedirs(args.output, exist_ok=True)
 
-    run_scan(args.targets, config, args.output)
+    try:
+        run_scan(args.targets, config, args.output)
+    except KeyboardInterrupt:
+        print("\n  [!] interrupted")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
