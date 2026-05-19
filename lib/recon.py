@@ -480,9 +480,9 @@ def run_recon(domain: str, config: dict, output: str) -> dict[str, Any]:
         anim = threading.Thread(target=_animate, daemon=True)
         anim.start()
 
-        for i in range(total_steps):
-            work_fn(i)
-            current_step = i + 1
+        for step_idx in range(total_steps):
+            work_fn(step_idx)
+            current_step = step_idx + 1
 
         done = True
         anim.join(timeout=1)

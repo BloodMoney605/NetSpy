@@ -113,13 +113,13 @@ def generate_report(input_dir: str, output_dir: str) -> str:
         services = scan.get("services", [])
         lines.append(f"  {'IP':<18s} {'Port':<7s} {'Proto':<6s} {'Service':<14s} {'Product':<20s} {'Version'}")
         lines.append("  " + "-" * 95)
-        for s in services[:100]:
-            ip = s.get("ip", "")
-            port = str(s.get("port", ""))
-            proto = s.get("protocol", "")
-            svc = s.get("service", "")
-            prod = s.get("product", "")
-            ver = s.get("version", "")
+        for svc_entry in services[:100]:
+            ip = svc_entry.get("ip", "")
+            port = str(svc_entry.get("port", ""))
+            proto = svc_entry.get("protocol", "")
+            svc = svc_entry.get("service", "")
+            prod = svc_entry.get("product", "")
+            ver = svc_entry.get("version", "")
             lines.append(f"  {ip:<18s} {port:<7s} {proto:<6s} {svc:<14s} {prod:<20s} {ver}")
         if len(services) > 100:
             lines.append(f"  ... and {len(services) - 100} more")
@@ -137,11 +137,11 @@ def generate_report(input_dir: str, output_dir: str) -> str:
             lines.append("")
             lines.append(f"  {'URL':<50s} {'Status':<7s} {'Title':<40s} {'Server'}")
             lines.append("  " + "-" * 120)
-            for h in alive[:50]:
-                url = h.get("url", "")[:50]
-                status = str(h.get("status", "?"))
-                title = (h.get("title", "") or "")[:40]
-                server = h.get("server", "")
+            for host_entry in alive[:50]:
+                url = host_entry.get("url", "")[:50]
+                status = str(host_entry.get("status", "?"))
+                title = (host_entry.get("title", "") or "")[:40]
+                server = host_entry.get("server", "")
                 lines.append(f"  {url:<50s} {status:<7s} {title:<40s} {server}")
             if len(alive) > 50:
                 lines.append(f"  ... and {len(alive) - 50} more")

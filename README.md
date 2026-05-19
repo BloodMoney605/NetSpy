@@ -1,71 +1,84 @@
 # NetSpy
 
-Network surveillance pipeline for reconnaissance and vulnerability assessment. Feed it a domain and get structured data about subdomains, open ports, technologies, and CVEs.
+Pipeline de vigilancia de red para reconocimiento y evaluación de vulnerabilidades. Alimentalo con un dominio y obtené datos estructurados sobre subdominios, puertos abiertos, tecnologías y CVEs.
 
 ## Pipeline
 
 ```
-Recon  ->  Port Scan  ->  Fingerprint  ->  CVE Matching  ->  TXT Report
-(1)        (2)           (3)             (4 + nuclei)       (5)
+Recon  ->  Escaneo de Puertos  ->  Fingerprint  ->  CVE Matching  ->  Reporte TXT
+(1)           (2)                  (3)             (4 + nuclei)       (5)
 ```
 
-- Phase 1: Subdomain enumeration (crt.sh + wordlist fallback), DNS resolution, WHOIS, ASN
-- Phase 2: Port scan with nmap, service version detection
-- Phase 3: HTTP probing (httpx), technology detection (whatweb), version extraction
-- Phase 4: CVE matching via NVD API, nuclei template scanning, SSL audit
-- Phase 5: Consolidated TXT report with severity breakdown
+- **Fase 1:** Enumeración de subdominios (crt.sh + wordlist), resolución DNS, WHOIS, ASN
+- **Fase 2:** Escaneo de puertos con nmap, detección de versiones de servicios
+- **Fase 3:** Sondeo HTTP (httpx), detección de tecnologías (whatweb), extracción de versiones
+- **Fase 4:** Búsqueda de CVEs vía API NVD, escaneo con nuclei, auditoría SSL
+- **Fase 5:** Reporte TXT consolidado con desglose por severidad
 
-## Quick start
+## Inicio rápido
 
 ```bash
-# Install dependencies
+# Instalar dependencias
 bash install.sh
 
-# Audit a domain
-netspy audit --domain example.com
+# Auditar un dominio
+netspy audit --domain ejemplo.com
 
-# Individual phases
-netspy recon --domain example.com
+# Fases individuales
+netspy recon --domain ejemplo.com
 netspy portscan --target 192.168.1.0/24
-netspy report --dir output/example.com
+netspy report --dir output/ejemplo.com
 
-# Override thread count
-netspy recon --domain example.com --threads 50
+# Sobreescribir cantidad de hilos
+netspy recon --domain ejemplo.com --threads 50
 ```
 
-## Requirements
+## Requisitos
 
 - Python 3.10+
 - nmap, whois, whatweb, openssl
-- httpx (projectdiscovery), nuclei (optional)
+- httpx (projectdiscovery), nuclei (opcional)
 
-## Configuration
+## Configuración
 
-Edit `config/default.yaml` to adjust:
+Editá `config/default.yaml` para ajustar:
 
-- `scan.ports.top` — number of ports to scan (default: 200)
-- `target.threads` — concurrency (default: 20)
-- `vuln.enable_nuclei` — enable nuclei scanning (default: false, consumes significant memory)
-- `scan.use_custom_scanner` — use TCP connect scanner instead of nmap (default: false)
+- `scan.ports.top` — cantidad de puertos a escanear (default: 200)
+- `target.threads` — concurrencia (default: 20)
+- `vuln.enable_nuclei` — habilitar escaneo nuclei (default: false, consume mucha memoria)
+- `scan.use_custom_scanner` — usar escáner TCP connect en vez de nmap (default: false)
 
-## Output
+## Salida
 
 ```
-output/<domain>/
-├── recon.json           # Phase 1: subdomains, IPs, DNS, WHOIS, ASN
-├── ips.txt              # Target IP list
-├── subdomains.txt       # Resolved subdomains
-├── ports.json           # Phase 2: open ports, services, versions
-├── urls.txt             # Web URLs for scanning
-├── tech.json            # Phase 3: technologies, versions, headers
-├── findings.json        # Phase 4: CVEs, nuclei results, misconfigs
-└── report.txt           # Phase 5: consolidated text report
+output/<dominio>/
+├── recon.json           # Fase 1: subdominios, IPs, DNS, WHOIS, ASN
+├── ips.txt              # Lista de IPs objetivo
+├── subdomains.txt       # Subdominios resueltos
+├── ports.json           # Fase 2: puertos abiertos, servicios, versiones
+├── urls.txt             # URLs web para escaneo
+├── tech.json            # Fase 3: tecnologías, versiones, headers
+├── findings.json        # Fase 4: CVEs, resultados nuclei, misconfigs
+└── report.txt           # Fase 5: reporte de texto consolidado
 ```
 
-## CVE matching
+## Búsqueda de CVEs
 
-Each detected product:version is queried against the NVD API. Results include CVE ID, severity (CRITICAL/HIGH/MEDIUM/LOW), CVSS score, and description. Results are cached locally in `~/.netspy/cve.db` to avoid re-querying.
+Cada producto:versión detectado se consulta contra la API de NVD. Los resultados incluyen ID de CVE, severidad (CRITICAL/HIGH/MEDIUM/LOW), puntaje CVSS y descripción. Los resultados se cachean localmente en `~/.netspy/cve.db` para evitar reconsultas.
 
-## License
+## Sigilo
 
-See [LICENSE](LICENSE) — Educational & Ethical Use Only
+NetSpy incluye un menú de sigilo configurable con 4 niveles:
+
+1. **MAC spoof** — cambia la MAC durante el escaneo y la restaura al salir
+2. **Delays moderados** — retrasos entre requests
+3. **MAC spoof + delays** — combinación de ambos
+4. **Sin sigilo** — modo normal (default)
+
+## Licencia
+
+Ver [LICENSE](LICENSE) — Uso Educativo y Ético
+
+## Créditos
+
+Ver [SALUDOS](SALUDOS)
