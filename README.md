@@ -1,6 +1,6 @@
 # NetSpy
 
-Pipeline de vigilancia de red para reconocimiento y evaluación de vulnerabilidades. Alimentalo con un dominio y obtené datos estructurados sobre subdominios, puertos abiertos, tecnologías y CVEs.
+NetSpy es un pipeline de vigilancia de red diseñado para reconocimiento y evaluación de vulnerabilidades. Dale un dominio y te devuelve un mapa completo de su infraestructura: subdominios, puertos abiertos, tecnologías detectadas, versiones de software y vulnerabilidades conocidas (CVEs).
 
 ## Pipeline
 
@@ -9,7 +9,7 @@ Recon  ->  Escaneo de Puertos  ->  Fingerprint  ->  CVE Matching  ->  Reporte TX
 (1)           (2)                  (3)             (4 + nuclei)       (5)
 ```
 
-- **Fase 1:** Enumeración de subdominios (crt.sh + wordlist), resolución DNS, WHOIS, ASN
+- **Fase 1:** Enumeración de subdominios, resolución DNS, WHOIS, ASN
 - **Fase 2:** Escaneo de puertos con nmap, detección de versiones de servicios
 - **Fase 3:** Sondeo HTTP (httpx), detección de tecnologías (whatweb), extracción de versiones
 - **Fase 4:** Búsqueda de CVEs vía API NVD, escaneo con nuclei, auditoría SSL
