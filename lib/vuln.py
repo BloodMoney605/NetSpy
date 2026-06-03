@@ -32,45 +32,47 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
 def _version_in_range(our_ver: str, summary_lower: str) -> bool:
     our = _parse_version(our_ver)
 
-    version_range_match = re.search(r"versions?\s+(\d+\.\d+(?:\.\d+)*)\s+(?:to|through)\s+(\d+\.\d+(?:\.\d+)*)", summary_lower)
-    if version_range_match:
-        low = _parse_version(version_range_match.group(1))
-        high = _parse_version(version_range_match.group(2))
-        return low <= our <= high
+    version_number = r"(\d+\.\d+(?:\.\d+)*)"
+    version_range = version_number + r"\s+(?:to|through)\s+" + version_number
 
-    version_range_match = re.search(r"(\d+\.\d+(?:\.\d+)*)\s+(?:to|through)\s+(\d+\.\d+(?:\.\d+)*)", summary_lower)
-    if version_range_match:
-        low = _parse_version(version_range_match.group(1))
-        high = _parse_version(version_range_match.group(2))
-        return low <= our <= high
+    # Check: "versions X to Y" or "version X to Y"
+    match = re.search(r"versions?\s+" + version_range, summary_lower)
+    if match:
+        return _parse_version(match.group(1)) <= our <= _parse_version(match.group(2))
 
-    and_earlier_match = re.search(r"(\d+\.\d+(?:\.\d+)*)\s+(?:and earlier|and prior)", summary_lower)
-    if and_earlier_match:
-        threshold = _parse_version(and_earlier_match.group(1))
-        return our <= threshold
+    # Check: "X to Y" or "X through Y"
+    match = re.search(version_range, summary_lower)
+    if match:
+        return _parse_version(match.group(1)) <= our <= _parse_version(match.group(2))
 
-    listed_versions = re.findall(r"(\d+\.\d+\.\d+)", summary_lower)
-    if len(listed_versions) >= 2:
-        parsed_versions = [_parse_version(v) for v in listed_versions]
-        if our in parsed_versions:
+    # Check: "X and earlier" or "X and prior"
+    match = re.search(version_number + r"\s+(?:and earlier|and prior)", summary_lower)
+    if match:
+        return our <= _parse_version(match.group(1))
+
+    # Check: "before X" or "prior to X"
+    match = re.search(r"(?:before|prior to)\s+" + version_number, summary_lower)
+    if match:
+        return our < _parse_version(match.group(1))
+
+    # Check: "through X" or "up to X"
+    match = re.search(r"(?:through|up to)\s+" + version_number, summary_lower)
+    if match:
+        return our <= _parse_version(match.group(1))
+
+    # Check: "X.x before Y" (e.g. "2.4.x before 2.4.10")
+    match = re.search(version_number + r"\.x\s+before\s+" + version_number, summary_lower)
+    if match:
+        return our < _parse_version(match.group(2))
+
+    # Check: if multiple versions are listed, ours must be one of them
+    seen_versions = re.findall(version_number, summary_lower)
+    if len(seen_versions) >= 2:
+        parsed = [_parse_version(v) for v in seen_versions]
+        if our in parsed:
             return True
-        if all(our < v for v in parsed_versions):
+        if all(our < v for v in parsed):
             return False
-
-    before_match = re.search(r"(?:before|prior to)\s+(\d+\.\d+(?:\.\d+)*)", summary_lower)
-    if before_match:
-        threshold = _parse_version(before_match.group(1))
-        return our < threshold
-
-    through_match = re.search(r"(?:through|up to)\s+(\d+\.\d+(?:\.\d+)*)", summary_lower)
-    if through_match:
-        threshold = _parse_version(through_match.group(1))
-        return our <= threshold
-
-    x_before_match = re.search(r"(\d+\.\d+)\.x\s+before\s+(\d+\.\d+(?:\.\d+)*)", summary_lower)
-    if x_before_match:
-        threshold = _parse_version(x_before_match.group(2))
-        return our < threshold
 
     return None
 
@@ -214,12 +216,20 @@ def query_osv(ecosystem: str, package: str, version: str) -> list[dict[str, Any]
 
 
 def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
+    # Build NVD API URL from product and version
     version_parts = version.strip().split(".")
-    major_ver = ".".join(version_parts[:2]) if len(version_parts) >= 2 else version_parts[0]
-    keyword = f"{product} {major_ver}"
-    encoded = quote(keyword)
-    url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={encoded}&resultsPerPage=50"
+    if len(version_parts) >= 2:
+        major_version = ".".join(version_parts[:2])
+    else:
+        major_version = version_parts[0]
 
+    keyword = f"{product} {major_version}"
+    url = (
+        f"https://services.nvd.nist.gov/rest/json/cves/2.0"
+        f"?keywordSearch={quote(keyword)}&resultsPerPage=50"
+    )
+
+    # Fetch with retry for rate limiting
     retries = 3
     for attempt in range(retries):
         try:
@@ -234,138 +244,39 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
     else:
         return []
 
+    return _filter_nvd_results(product, version, data)
+
+
+def _filter_nvd_results(product: str, version: str, data: dict) -> list[dict[str, Any]]:
     product_lower = product.lower()
-    version_clean = version.strip()
-    results: list[dict[str, Any]] = []
+    clean_version = version.strip()
+    results = []
+
     for vuln_entry in data.get("vulnerabilities", []):
         cve_data = vuln_entry.get("cve", {})
         cve_id = cve_data.get("id", "")
         if not cve_id:
             continue
 
-        metrics = cve_data.get("metrics", {})
-        severity = "UNKNOWN"
-        score = 0.0
-        for cvss_type in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-            if cvss_type in metrics:
-                cvss_data = metrics[cvss_type][0].get("cvssData", {})
-                severity = cvss_data.get("baseSeverity", "")
-                score = cvss_data.get("baseScore", 0)
-                if not severity and score > 0:
-                    if score >= 9.0:
-                        severity = "CRITICAL"
-                    elif score >= 7.0:
-                        severity = "HIGH"
-                    elif score >= 4.0:
-                        severity = "MEDIUM"
-                    else:
-                        severity = "LOW"
-                break
-
-        descriptions = cve_data.get("descriptions", [])
-        summary = ""
-        for desc_entry in descriptions:
-            if desc_entry.get("lang") == "en":
-                summary = desc_entry.get("value", "")[:300]
-                break
+        severity, score = _extract_nvd_severity(cve_data.get("metrics", {}))
+        summary = _get_english_summary(cve_data.get("descriptions", [])[:300])
+        if not summary:
+            continue
 
         summary_lower = summary.lower()
 
-        other_products = [
-            "oracle", "bea", "weblogic", "mcafee", "hpe", "icewall",
-            "sap", "ibm", "symantec", "trend micro", "kaspersky",
-            "f5 big-ip", "citrix", "vmware", "juniper", "cisco",
-            "fortinet", "checkpoint", "palo alto", "dell", "hp",
-            "lenovo", "samsung", "huawei", "zte",
-        ]
-        is_about_other = False
-        for other_product in other_products:
-            if other_product in summary_lower and other_product not in product_lower:
-                if f"for {product_lower}" in summary_lower or \
-                   f"plugin" in summary_lower or \
-                   f"plug-in" in summary_lower:
-                    is_about_other = True
-                    break
-        if is_about_other:
+        if not _product_in_summary(product_lower, summary_lower):
             continue
 
-        platform_patterns = [
-            rf"when running on\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"when used with\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"running on\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"on\s+(?:a\s+)?{re.escape(product_lower)}\s+server",
-            rf"for\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"in conjunction with\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"used with\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"deployed on\s+(?:a\s+)?{re.escape(product_lower)}",
-            rf"installed on\s+(?:a\s+)?{re.escape(product_lower)}",
-        ]
-        is_platform = any(re.search(pattern, summary_lower) for pattern in platform_patterns)
-        if is_platform:
+        if _is_false_positive(product_lower, summary_lower):
             continue
 
-        first_part = summary_lower[:150]
-        product_words = product_lower.split()
-        if len(product_words) >= 2:
-            has_product = False
-            for word_idx in range(len(product_words) - 1):
-                bigram = f"{product_words[word_idx]} {product_words[word_idx+1]}"
-                if bigram in first_part:
-                    has_product = True
-                    break
-            if not has_product:
-                continue
-        else:
-            if len(product_lower) < 4:
-                word_boundary_pattern = r'\b' + re.escape(product_lower) + r'\b'
-                if not re.search(word_boundary_pattern, first_part):
-                    continue
-            else:
-                if product_lower not in first_part:
-                    continue
+        version_range = _version_in_range(clean_version, summary_lower)
 
-            if len(product_lower) < 5:
-                compound_words = [
-                    "vault", "dashmachine", "privileged", "privilege",
-                    "embedded", "extended", "redirected", "requested", "restricted",
-                ]
-                skip_cve = False
-                for compound in compound_words:
-                    if product_lower in compound and compound in summary_lower:
-                        skip_cve = True
-                        break
-                if skip_cve:
-                    continue
-
-            if product_lower == "dash":
-                if "alliance" in summary_lower or "protocol" in summary_lower or "iot" in summary_lower:
-                    continue
-
-        if "winnt" in summary_lower:
+        if version_range is False:
             continue
 
-        if not _is_runtime_cve(product, summary_lower):
-            continue
-
-        if product_lower in ("wordpress", "joomla", "drupal", "magento", "prestashop", "woocommerce"):
-            if re.search(r"\b\w+\s+plugin\b", summary_lower) or \
-               re.search(r"\b\w+\s+theme\b", summary_lower) or \
-               re.search(r"\bplugin\b.*\bwordpress\b", summary_lower) or \
-               re.search(r"\bwordpress\b.*\bplugin\b", summary_lower):
-                continue
-
-        version_in_summary = version_clean in summary or \
-                             f"before {version_clean}" in summary_lower or \
-                             f"through {version_clean}" in summary_lower or \
-                             f"up to {version_clean}" in summary_lower or \
-                             f"prior to {version_clean}" in summary_lower or \
-                             f"from {version_clean}" in summary_lower or \
-                             f"since {version_clean}" in summary_lower
-
-        range_check = _version_in_range(version_clean, summary_lower)
-        if range_check is False:
-            continue
-        if range_check is True:
+        if version_range is True:
             results.append({
                 "id": cve_id,
                 "severity": severity.upper(),
@@ -375,33 +286,30 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
             })
             continue
 
-        mentioned_versions = re.findall(r"\b(\d+\.\d+(?:\.\d+)*|\d+\.x)\b", summary_lower)
+        version_in_summary = (
+            clean_version in summary
+            or f"before {clean_version}" in summary_lower
+            or f"through {clean_version}" in summary_lower
+            or f"up to {clean_version}" in summary_lower
+            or f"prior to {clean_version}" in summary_lower
+        )
 
-        def _version_major_minor(ver_str: str) -> tuple[int, int]:
-            ver_parts = ver_str.split(".")
-            try:
-                return (int(ver_parts[0]), int(ver_parts[1]))
-            except (ValueError, IndexError):
-                return (-1, -1)
-
-        our_vm = _version_major_minor(version_clean)
-        has_other_version = False
-        for mentioned_ver in mentioned_versions:
-            if len(mentioned_ver) < 3 or mentioned_ver == version_clean:
+        if not version_in_summary:
+            mentioned_versions = re.findall(
+                r"\b(\d+\.\d+(?:\.\d+)*)\b", summary_lower
+            )
+            if not mentioned_versions:
                 continue
-            vm = _version_major_minor(mentioned_ver)
-            if vm != (-1, -1) and our_vm != (-1, -1) and vm != our_vm:
-                has_other_version = True
-                break
 
-        if has_other_version and not version_in_summary:
-            continue
+            our_major = clean_version.split(".")[0]
+            compatible_version = False
+            for mv in mentioned_versions:
+                if mv.split(".")[0] == our_major:
+                    compatible_version = True
+                    break
 
-        if not mentioned_versions and not version_in_summary:
-            continue
-
-        if range_check is None and not version_in_summary and not mentioned_versions:
-            continue
+            if not compatible_version:
+                continue
 
         results.append({
             "id": cve_id,
@@ -412,6 +320,93 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
         })
 
     return results
+
+
+def _extract_nvd_severity(metrics: dict) -> tuple[str, float]:
+    severity = "UNKNOWN"
+    score = 0.0
+
+    cvss_types = ["cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]
+    for cvss_type in cvss_types:
+        if cvss_type not in metrics:
+            continue
+
+        cvss_data = metrics[cvss_type][0].get("cvssData", {})
+        severity = cvss_data.get("baseSeverity", "")
+        score = cvss_data.get("baseScore", 0)
+
+        if not severity and score > 0:
+            if score >= 9.0:
+                severity = "CRITICAL"
+            elif score >= 7.0:
+                severity = "HIGH"
+            elif score >= 4.0:
+                severity = "MEDIUM"
+            else:
+                severity = "LOW"
+
+        if severity:
+            break
+
+    return severity.upper(), score
+
+
+def _get_english_summary(descriptions: list) -> str:
+    for entry in descriptions:
+        if entry.get("lang") == "en":
+            return entry.get("value", "")[:300]
+    return ""
+
+
+def _product_in_summary(product: str, summary: str) -> bool:
+    first_part = summary[:150]
+    product_words = product.split()
+
+    # Multi-word products: check if bigram appears in summary
+    if len(product_words) >= 2:
+        for idx in range(len(product_words) - 1):
+            bigram = f"{product_words[idx]} {product_words[idx + 1]}"
+            if bigram in first_part:
+                return True
+        return False
+
+    # Single-word products shorter than 4 chars: use word boundaries
+    if len(product) < 4:
+        word_boundary = r'\b' + re.escape(product) + r'\b'
+        return bool(re.search(word_boundary, first_part))
+
+    # Default: simple substring match
+    return product in first_part
+
+
+def _is_false_positive(product: str, summary: str) -> bool:
+    # Short product names that appear inside longer words
+    short_name_false_positives = {
+        "ed": ["privileged", "vault", "needed", "embedded"],
+        "acl": [],
+        "dash": ["dashmachine", "alliance"],
+    }
+
+    for short_name, compounds in short_name_false_positives.items():
+        if product != short_name:
+            continue
+        for compound in compounds:
+            if compound in summary:
+                return True
+
+    # Windows-specific components (WinNT MPM, etc.)
+    if "winnt" in summary:
+        return True
+
+    # CVEs about other runtimes (PHP, Python, etc.)
+    other_runtimes = ["php", "python", "perl"]
+    for runtime in other_runtimes:
+        if runtime in summary and runtime not in product:
+            version_pattern = runtime + r"\s+(before|through|up to)\s+\d+\.\d+"
+            if re.search(version_pattern, summary):
+                return True
+
+    return False
 
 
 def _is_distro_package(product: str) -> bool:
@@ -557,6 +552,9 @@ def match_cves(versions: list[dict[str, str]], db: sqlite3.Connection) -> list[d
         "envoy": "Envoy Proxy",
         "varnish": "Varnish Cache",
         "haproxy": "HAProxy",
+        "gunicorn": "Gunicorn",
+        "ats": "Apache Traffic Server",
+        "apache traffic server": "Apache Traffic Server",
     }
 
     SKIP_PRODUCTS = {
