@@ -289,7 +289,7 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
         if is_platform:
             continue
 
-        first_part = summary_lower[:120]
+        first_part = summary_lower[:150]
         product_words = product_lower.split()
         if len(product_words) >= 2:
             has_product = False
@@ -301,8 +301,30 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
             if not has_product:
                 continue
         else:
-            if product_lower not in first_part:
-                continue
+            if len(product_lower) < 4:
+                word_boundary_pattern = r'\b' + re.escape(product_lower) + r'\b'
+                if not re.search(word_boundary_pattern, first_part):
+                    continue
+            else:
+                if product_lower not in first_part:
+                    continue
+
+            if len(product_lower) < 5:
+                compound_words = [
+                    "vault", "dashmachine", "privileged", "privilege",
+                    "embedded", "extended", "redirected", "requested", "restricted",
+                ]
+                skip_cve = False
+                for compound in compound_words:
+                    if product_lower in compound and compound in summary_lower:
+                        skip_cve = True
+                        break
+                if skip_cve:
+                    continue
+
+            if product_lower == "dash":
+                if "alliance" in summary_lower or "protocol" in summary_lower or "iot" in summary_lower:
+                    continue
 
         if not _is_runtime_cve(product, summary_lower):
             continue
