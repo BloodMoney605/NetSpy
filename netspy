@@ -5,7 +5,12 @@ SCRIPT_PATH="$(readlink -f "$0")"
 NETSPY_ROOT="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 export NETSPY_ROOT
 export NETSPY_CONFIG="${NETSPY_CONFIG:-$NETSPY_ROOT/config/default.yaml}"
+export NETSPY_TMP="${NETSPY_TMP:-$HOME/.netspy/tmp}"
+export NETSPY_VERBOSE="${NETSPY_VERBOSE:-0}"
+export NETSPY_DEBUG="${NETSPY_DEBUG:-0}"
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"
+
+NETSPY_VERSION="1.0.0"
 
 # colors
 RED='\033[0;31m'
@@ -668,6 +673,15 @@ if [ $# -gt 0 ]; then
         portscan) shift; cmd_scan "$@" ;;
         report) shift; cmd_report "$@" ;;
         doctor) cmd_doctor ;;
+        clean)
+            echo -e "  ${YELLOW}[*]${NC} clearing CVE cache..."
+            rm -f "$HOME/.netspy/cve.db"
+            rm -rf "$NETSPY_TMP"
+            echo -e "  ${GREEN}[ok]${NC} cache cleared"
+            ;;
+        version|--version|-v)
+            echo "NetSpy v$NETSPY_VERSION"
+            ;;
         license)
             cat "$NETSPY_ROOT/LICENSE" 2>/dev/null || echo "License file not found."
             ;;
@@ -681,9 +695,11 @@ Usage:
   netspy recon   --domain <domain>    Phase 1: subdomain + dns recon only
   netspy portscan --target <ip/range> Phase 2: port scan only
   netspy report  --dir <output_dir>   Generate report from existing output
-  netspy doctor                       Check and install dependencies
-  netspy help                         Show this help
-  netspy license                      Show license and disclaimer
+   netspy doctor                       Check and install dependencies
+  netspy clean                         Clear CVE cache and temp files
+  netspy version                       Show version
+  netspy help                          Show this help
+  netspy license                       Show license and disclaimer
 
 Options:
   --domain       Target domain (ej: example.com)
@@ -691,6 +707,10 @@ Options:
   --config       Custom config file path
   --output       Output directory (default: ./output/<target>)
   --threads      Override thread count
+
+Environment:
+  NETSPY_VERBOSE=1           Enable verbose output
+  NETSPY_DEBUG=1             Enable debug mode (includes verbose)
 
 Examples:
   netspy audit --domain ejemplo.com

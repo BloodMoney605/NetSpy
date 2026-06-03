@@ -502,6 +502,7 @@ def match_cves(versions: list[dict[str, str]], db: sqlite3.Connection) -> list[d
         "httpd": "Apache HTTP Server",
         "openssh": "OpenSSH",
         "openssl": "OpenSSL",
+        "libssh": "libssh",
         "nginx": "nginx",
         "mysql": "MySQL",
         "mariadb": "MariaDB",
@@ -513,9 +514,12 @@ def match_cves(versions: list[dict[str, str]], db: sqlite3.Connection) -> list[d
         "nodejs": "Node.js",
         "redis": "Redis",
         "mongodb": "MongoDB",
+        "couchdb": "Apache CouchDB",
+        "apache couchdb": "Apache CouchDB",
         "elasticsearch": "Elasticsearch",
         "docker": "Docker",
         "kubernetes": "Kubernetes",
+        "k8s": "Kubernetes",
         "tomcat": "Apache Tomcat",
         "apache tomcat": "Apache Tomcat",
         "log4j": "Apache Log4j",
@@ -539,8 +543,21 @@ def match_cves(versions: list[dict[str, str]], db: sqlite3.Connection) -> list[d
         "vue.js": "Vue.js",
         "jquery": "jQuery",
         "bootstrap": "Bootstrap",
+        "jetty": "Eclipse Jetty",
+        "eclipse jetty": "Eclipse Jetty",
+        "jboss": "JBoss",
+        "wildfly": "WildFly",
+        "rabbitmq": "RabbitMQ",
+        "apache zookeeper": "Apache ZooKeeper",
+        "zookeeper": "Apache ZooKeeper",
+        "apache kafka": "Apache Kafka",
+        "kafka": "Apache Kafka",
+        "grafana": "Grafana",
+        "prometheus": "Prometheus",
         "postfix": "Postfix",
         "dovecot": "Dovecot",
+        "exim": "Exim",
+        "sendmail": "Sendmail",
         "bind": "BIND",
         "named": "BIND",
         "microsoft-iis": "Microsoft IIS",
@@ -555,6 +572,28 @@ def match_cves(versions: list[dict[str, str]], db: sqlite3.Connection) -> list[d
         "gunicorn": "Gunicorn",
         "ats": "Apache Traffic Server",
         "apache traffic server": "Apache Traffic Server",
+        "caddy": "Caddy",
+        "lighttpd": "Lighttpd",
+        "traefik": "Traefik",
+        "squid": "Squid Proxy",
+        "vault": "HashiCorp Vault",
+        "hashicorp vault": "HashiCorp Vault",
+        "consul": "Consul",
+        "terraform": "Terraform",
+        "ansible": "Ansible",
+        "jenkins": "Jenkins",
+        "gitlab": "GitLab",
+        "github": "GitHub",
+        "jira": "Jira",
+        "confluence": "Confluence",
+        "nexus": "Sonatype Nexus",
+        "sonarqube": "SonarQube",
+        "sentry": "Sentry",
+        "samba": "Samba",
+        "smb": "Samba",
+        "cifs": "Samba",
+        "nfs": "NFS",
+        "iscsi": "iSCSI",
     }
 
     SKIP_PRODUCTS = {
@@ -650,7 +689,9 @@ def run_nuclei(targets_file: str, templates_path: str | None = None) -> list[dic
     if not os.path.exists(targets_file):
         return []
 
-    output_file = f"/tmp/netspy_nuclei_{int(time.time())}.jsonl"
+    tmp_dir = os.environ.get("NETSPY_TMP", os.path.expanduser("~/.netspy/tmp"))
+    os.makedirs(tmp_dir, exist_ok=True)
+    output_file = os.path.join(tmp_dir, f"nuclei_{int(time.time())}.jsonl")
 
     cmd = [
         "nuclei",

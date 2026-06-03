@@ -168,7 +168,9 @@ def run_nmap_version_scan(
     if not ip_ports:
         return {"hosts": [], "total_open_ports": 0, "services": []}
 
-    output_file = f"/tmp/netspy_nmap_{int(time.time())}.xml"
+    tmp_dir = os.environ.get("NETSPY_TMP", os.path.expanduser("~/.netspy/tmp"))
+    os.makedirs(tmp_dir, exist_ok=True)
+    output_file = os.path.join(tmp_dir, f"nmap_{int(time.time())}.xml")
     host_list = list(ip_ports.items())
     total_hosts = len(host_list)
 
@@ -308,7 +310,9 @@ def run_nmap_direct_scan(
     top_n: int = 1000,
     timeout: int = 600,
 ) -> dict[str, Any] | None:
-    output_file = f"/tmp/netspy_nmap_{int(time.time())}.xml"
+    tmp_dir = os.environ.get("NETSPY_TMP", os.path.expanduser("~/.netspy/tmp"))
+    os.makedirs(tmp_dir, exist_ok=True)
+    output_file = os.path.join(tmp_dir, f"nmap_{int(time.time())}.xml")
     nmap_cmd = [
         "nmap", "-Pn", "-sT", "-sV", "-T4",
         "--top-ports", str(top_n),

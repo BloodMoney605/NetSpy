@@ -30,8 +30,10 @@ def run_httpx(urls: list[str], threads: int = 20) -> list[dict[str, Any]]:
     if not urls:
         return []
 
-    input_file = f"/tmp/netspy_httpx_input_{int(time.time())}.txt"
-    output_file = f"/tmp/netspy_httpx_out_{int(time.time())}.json"
+    tmp_dir = os.environ.get("NETSPY_TMP", os.path.expanduser("~/.netspy/tmp"))
+    os.makedirs(tmp_dir, exist_ok=True)
+    input_file = os.path.join(tmp_dir, f"httpx_input_{int(time.time())}.txt")
+    output_file = os.path.join(tmp_dir, f"httpx_out_{int(time.time())}.json")
 
     with open(input_file, "w") as url_file:
         for url in urls:
