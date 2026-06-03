@@ -380,19 +380,25 @@ def _product_in_summary(product: str, summary: str) -> bool:
 
 
 def _is_false_positive(product: str, summary: str) -> bool:
-    # Short product names that appear inside longer words
-    short_name_false_positives = {
-        "ed": ["privileged", "vault", "needed", "embedded"],
+    # Product name appears as substring inside a longer unrelated word
+    # Example: "ed" inside "privileged", "acl" inside "aclcheck"
+    short_name_compounds = {
+        "ed": ["privileged", "privilege", "needed", "embedded", "extended", "redirected"],
         "acl": [],
-        "dash": ["dashmachine", "alliance"],
+        "dash": ["dashmachine"],
     }
 
-    for short_name, compounds in short_name_false_positives.items():
+    for short_name, compounds in short_name_compounds.items():
         if product != short_name:
             continue
         for compound in compounds:
-            if compound in summary:
+            if short_name in compound and compound in summary:
                 return True
+
+    # "dash" also matches DASH 7 IoT protocol (not the shell)
+    if product == "dash":
+        if "alliance" in summary or "protocol" in summary or "iot" in summary:
+            return True
 
     # Windows-specific components (WinNT MPM, etc.)
     if "winnt" in summary:

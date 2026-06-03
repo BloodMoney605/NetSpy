@@ -62,6 +62,7 @@ def test_product_in_summary():
 def test_false_positive():
     check("ed in privileged", _is_false_positive("ed", "a privileged vault operator") == True)
     check("dashmachine", _is_false_positive("dash", "rmountjoy92 dashmachine") == True)
+    check("dash alliance", _is_false_positive("dash", "DASH 7 Alliance protocol") == True)
     check("winnt mpm", _is_false_positive("apache", "winnt_accept function in winnt mpm") == True)
     check("php cve for apache", _is_false_positive("apache", "in php before 5.4") == True)
     check("apache cve not fp", _is_false_positive("apache", "apache http server before 2.4.30") == False)
