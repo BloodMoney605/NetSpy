@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -198,12 +199,18 @@ def query_osv(ecosystem: str, package: str, version: str) -> list[dict[str, Any]
 
     req = Request(url, data=payload, headers={"Content-Type": "application/json"})
 
-    try:
-        with urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-            return data.get("vulns", [])
-    except Exception:
-        return []
+    retries = 3
+    for attempt in range(retries):
+        try:
+            with urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode())
+                return data.get("vulns", [])
+        except Exception as e:
+            if "429" in str(e) and attempt < retries - 1:
+                time.sleep(1.0 * (attempt + 1))
+                continue
+            return []
+    return []
 
 
 def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
@@ -213,10 +220,18 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
     encoded = quote(keyword)
     url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={encoded}&resultsPerPage=50"
 
-    try:
-        with urlopen(url, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-    except Exception:
+    retries = 3
+    for attempt in range(retries):
+        try:
+            with urlopen(url, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+            break
+        except Exception as e:
+            if "429" in str(e) and attempt < retries - 1:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            return []
+    else:
         return []
 
     product_lower = product.lower()
@@ -326,6 +341,9 @@ def query_nvd(product: str, version: str) -> list[dict[str, Any]]:
                 if "alliance" in summary_lower or "protocol" in summary_lower or "iot" in summary_lower:
                     continue
 
+        if "winnt" in summary_lower:
+            continue
+
         if not _is_runtime_cve(product, summary_lower):
             continue
 
@@ -416,9 +434,7 @@ def _is_distro_package(product: str) -> bool:
 
 
 def _fetch_cves(product: str, version: str, db: sqlite3.Connection,
-                cache_lock: "threading.Lock") -> tuple[str, list[dict[str, Any]]]:
-    import socket
-
+                cache_lock: threading.Lock) -> tuple[str, list[dict[str, Any]]]:
     cache_key = f"{product}|{version}"
     cursor = db.execute("SELECT data FROM cve_cache WHERE key = ?", (cache_key,))
     cached = cursor.fetchone()
@@ -427,13 +443,10 @@ def _fetch_cves(product: str, version: str, db: sqlite3.Connection,
 
     all_cves: list[dict[str, Any]] = []
 
-    socket.setdefaulttimeout(10)
     try:
         all_cves.extend(query_nvd(product, version))
     except Exception:
         pass
-    finally:
-        socket.setdefaulttimeout(30)
 
     product_lower = product.lower()
     if product_lower in OSV_ECOSYSTEMS:
@@ -451,12 +464,24 @@ def _fetch_cves(product: str, version: str, db: sqlite3.Connection,
                 pass
 
     seen_ids: set[str] = set()
-    cves = []
+    cves_by_id: dict[str, dict[str, Any]] = {}
     for cve_entry in all_cves:
         cve_id = cve_entry.get("id", "")
-        if cve_id and cve_id not in seen_ids:
-            seen_ids.add(cve_id)
-            cves.append(cve_entry)
+        if not cve_id:
+            continue
+
+        if cve_id not in cves_by_id:
+            cves_by_id[cve_id] = cve_entry
+        else:
+            existing = cves_by_id[cve_id]
+            if cve_entry.get("source") == "nvd" and existing.get("source") != "nvd":
+                cves_by_id[cve_id] = cve_entry
+            elif cve_entry.get("severity", "UNKNOWN") != "UNKNOWN" and existing.get("severity", "UNKNOWN") == "UNKNOWN":
+                cves_by_id[cve_id] = cve_entry
+            elif cve_entry.get("score", 0) > existing.get("score", 0):
+                cves_by_id[cve_id] = cve_entry
+
+    cves = list(cves_by_id.values())
 
     try:
         with cache_lock:
@@ -472,8 +497,6 @@ def _fetch_cves(product: str, version: str, db: sqlite3.Connection,
 
 
 def match_cves(versions: list[dict[str, str]], db: sqlite3.Connection) -> list[dict[str, Any]]:
-    import threading
-
     findings: list[dict[str, Any]] = []
     seen_cves: set[str] = set()
 
